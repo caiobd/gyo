@@ -1,6 +1,7 @@
 """Deterministic geometry helpers for Semantic Atlas layouts."""
 
 from dataclasses import dataclass
+from numbers import Integral, Real
 from typing import Sequence
 
 import numpy as np
@@ -77,7 +78,26 @@ def _pairwise_distances(positions: NDArray[np.float64]) -> NDArray[np.float64]:
 def metric_mds(
     distances: ArrayLike, max_iter: int = 300, eps: float = 1e-7
 ) -> MDSResult:
-    """Fit a deterministic two-dimensional metric MDS layout using SMACOF."""
+    """Fit a deterministic two-dimensional metric MDS layout using SMACOF.
+
+    Coordinates are deterministic within the same numerical stack and environment.
+    Across LAPACK implementations, the reconstructed metric relationships—not an
+    exact coordinate orientation—are the portable contract.
+    """
+
+    if (
+        isinstance(max_iter, bool)
+        or not isinstance(max_iter, Integral)
+        or max_iter < 0
+    ):
+        raise ValueError("max_iter must be an integer greater than or equal to zero")
+    if (
+        isinstance(eps, bool)
+        or not isinstance(eps, Real)
+        or not np.isfinite(eps)
+        or eps < 0
+    ):
+        raise ValueError("eps must be a finite number greater than or equal to zero")
 
     target = np.asarray(distances, dtype=np.float64)
     if target.ndim != 2 or target.shape[0] != target.shape[1]:
@@ -86,7 +106,10 @@ def metric_mds(
         raise ValueError("distances must contain only finite values")
     if np.any(target < 0):
         raise ValueError("distances must be non-negative")
-    if not np.allclose(target, target.T):
+    tolerance = 1e-12
+    if not np.allclose(np.diag(target), 0.0, rtol=0.0, atol=tolerance):
+        raise ValueError("distances diagonal must be zero")
+    if not np.allclose(target, target.T, rtol=0.0, atol=tolerance):
         raise ValueError("distances must be symmetric")
 
     count = target.shape[0]
@@ -97,7 +120,7 @@ def metric_mds(
     denominator = float(np.sum(np.triu(np.square(target), k=1)))
     previous_stress = np.inf
 
-    for _ in range(max(0, max_iter)):
+    for _ in range(max_iter):
         fitted = _pairwise_distances(positions)
         ratios = np.divide(target, fitted, out=np.zeros_like(target), where=fitted > 0)
         b_matrix = -ratios
@@ -133,7 +156,7 @@ def metric_mds(
 
     positions -= positions.mean(axis=0)
     radius = float(np.max(np.linalg.norm(positions, axis=1)))
-    if radius > 1.0:
+    if radius > 0.0:
         positions /= radius
 
     fitted = _pairwise_distances(positions)

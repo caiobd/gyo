@@ -51,6 +51,25 @@ def test_metric_mds_is_deterministic_and_fits_a_triangle():
     assert first.stress < 0.01
 
 
+def test_metric_mds_normalizes_non_degenerate_layouts_and_is_scale_invariant():
+    unit = np.array(
+        [[0.0, 1.0, 1.0], [1.0, 0.0, 1.0], [1.0, 1.0, 0.0]]
+    )
+
+    full_scale = metric_mds(unit)
+    small_scale = metric_mds(unit * 0.1)
+
+    assert np.linalg.norm(small_scale.positions, axis=1).max() == pytest.approx(1.0)
+    full_distances = np.linalg.norm(
+        full_scale.positions[:, None, :] - full_scale.positions[None, :, :], axis=2
+    )
+    small_distances = np.linalg.norm(
+        small_scale.positions[:, None, :] - small_scale.positions[None, :, :], axis=2
+    )
+    np.testing.assert_allclose(small_distances, full_distances, atol=1e-12)
+    assert small_scale.stress == pytest.approx(full_scale.stress, abs=1e-12)
+
+
 @pytest.mark.parametrize("size", [0, 1])
 def test_metric_mds_supports_zero_and_one_point(size):
     result = metric_mds(np.zeros((size, size)))
@@ -74,6 +93,28 @@ def test_metric_mds_handles_duplicate_points_without_nan():
 def test_metric_mds_rejects_non_square_matrices():
     with pytest.raises(ValueError, match="square"):
         metric_mds(np.zeros((2, 3)))
+
+
+def test_metric_mds_rejects_nonzero_diagonal():
+    with pytest.raises(ValueError, match="diagonal must be zero"):
+        metric_mds([[0.01, 1.0], [1.0, 0.0]])
+
+
+def test_metric_mds_rejects_material_asymmetry():
+    with pytest.raises(ValueError, match="symmetric"):
+        metric_mds([[0.0, 1.0], [1.01, 0.0]])
+
+
+@pytest.mark.parametrize("max_iter", [-1, 1.5, True])
+def test_metric_mds_rejects_invalid_max_iter(max_iter):
+    with pytest.raises(ValueError, match="max_iter"):
+        metric_mds(np.zeros((0, 0)), max_iter=max_iter)
+
+
+@pytest.mark.parametrize("eps", [-1.0, np.nan, np.inf])
+def test_metric_mds_rejects_invalid_eps(eps):
+    with pytest.raises(ValueError, match="eps"):
+        metric_mds(np.zeros((0, 0)), eps=eps)
 
 
 def test_mds_result_is_immutable():
