@@ -8,6 +8,12 @@ from fastapi.responses import HTMLResponse, FileResponse
 
 from collections import Counter
 
+from gyo.atlas import (
+    metric_mds,
+    prefix_vector,
+    ranked_samples,
+    sibling_distance_matrix,
+)
 from gyo.io.store import load_table
 from gyo.tree.build import build_tree, node_at
 from gyo.tree.signals import node_stats, dead_codeword_counts
@@ -18,15 +24,54 @@ WEB = Path(__file__).resolve().parent.parent / "web"
 def create_app(data_dir: str) -> FastAPI:
     data_dir = Path(data_dir)
     app = FastAPI(title="gyo")
+    data_cache = None
+    atlas_cache = None
 
     def _load():
+        nonlocal data_cache
+        if data_cache is not None:
+            return data_cache
         codes_df = load_table(data_dir / "codes.parquet")
         meta_df = load_table(data_dir / "meta.parquet")
         level_cols = [c for c in codes_df.columns if c.startswith("c_")]
         codes = codes_df[sorted(level_cols)].to_numpy(np.int64)
         final_res = codes_df["final_residual"].to_numpy(np.float32)
-        labels = meta_df["label"].astype(str).tolist()
-        return codes, final_res, labels, meta_df
+        if "label" in meta_df:
+            label_values = meta_df["label"]
+            labels = [
+                None if missing else str(value)
+                for value, missing in zip(label_values, label_values.isna())
+            ]
+        else:
+            labels = [None] * len(meta_df)
+        data_cache = (codes, final_res, labels, meta_df)
+        return data_cache
+
+    def _load_atlas():
+        nonlocal atlas_cache
+        if atlas_cache is not None:
+            return atlas_cache
+
+        codes, final_res, labels, meta_df = _load()
+        embeddings_path = data_dir / "embeddings.npy"
+        config_path = data_dir / "codebooks" / "v1" / "config.json"
+        if not embeddings_path.exists():
+            raise HTTPException(409, "required Atlas input missing: embeddings.npy")
+        if not config_path.exists():
+            raise HTTPException(409, "required Atlas input missing: codebooks/v1/config.json")
+
+        config = json.loads(config_path.read_text())
+        num_levels = int(config.get("num_levels", codes.shape[1]))
+        codebooks = []
+        for level in range(num_levels):
+            path = config_path.parent / f"level_{level}.npy"
+            if not path.exists():
+                raise HTTPException(409, f"required Atlas input missing: {path.name}")
+            codebooks.append(np.load(path))
+        embeddings = np.load(embeddings_path)
+        root = build_tree(codes, final_res, labels)
+        atlas_cache = (root, labels, meta_df, embeddings, tuple(codebooks))
+        return atlas_cache
 
     @app.get("/", response_class=HTMLResponse)
     def index():
@@ -117,6 +162,83 @@ def create_app(data_dir: str) -> FastAPI:
             "size_norm": node_stat.size_norm,
             "purity": node_stat.purity,
             "label_distribution": label_dist,
+        }
+
+    @app.get("/api/atlas/{prefix}")
+    def atlas(prefix: str):
+        if prefix == "root":
+            pfx = ()
+        else:
+            try:
+                parts = prefix.split(",")
+                if not parts or any(part == "" for part in parts):
+                    raise ValueError
+                pfx = tuple(int(part) for part in parts)
+            except ValueError as exc:
+                raise HTTPException(400, "prefix must be 'root' or CSV integers") from exc
+
+        root, labels, meta_df, embeddings, codebooks = _load_atlas()
+        target = node_at(root, pfx)
+        if target is None:
+            raise HTTPException(404, "prefix not found")
+
+        stats_by_prefix = {stat.prefix: stat for stat in node_stats(root, labels)}
+
+        def item(position):
+            row = meta_df.iloc[position]
+            label = labels[position]
+            return {
+                "idx": int(position),
+                "path": str(row["path"]),
+                "label": label,
+            }
+
+        def node_payload(tree_node):
+            stat = stats_by_prefix[tree_node.prefix]
+            center = prefix_vector(tree_node.prefix, codebooks)
+            samples = ranked_samples(embeddings, tree_node.item_indices, center)
+            return {
+                "prefix": list(stat.prefix),
+                "level": stat.level,
+                "occupancy": stat.occupancy,
+                "mean_residual": stat.mean_residual,
+                "purity": stat.purity,
+                "residual_norm": stat.residual_norm,
+                "samples": {
+                    "representative": [item(index) for index in samples.representative],
+                    "outliers": [item(index) for index in samples.outliers],
+                },
+            }
+
+        child_nodes = list(target.children.values())
+        child_prefixes = [child.prefix for child in child_nodes]
+        distances = sibling_distance_matrix(child_prefixes, codebooks)
+        projection = metric_mds(distances)
+        parent_vector = prefix_vector(pfx, codebooks)
+        children = []
+        for child, position in zip(child_nodes, projection.positions):
+            child_vector = prefix_vector(child.prefix, codebooks)
+            token = codebooks[child.level - 1][child.prefix[-1]]
+            payload = node_payload(child)
+            payload.update(
+                {
+                    "position": position.tolist(),
+                    "parent_distance": float(np.linalg.norm(child_vector - parent_vector)),
+                    "token_norm": float(np.linalg.norm(token)),
+                    "has_children": bool(child.children),
+                }
+            )
+            children.append(payload)
+
+        return {
+            "focus": node_payload(target),
+            "children": children,
+            "projection": {
+                "method": "metric-mds",
+                "metric": "euclidean",
+                "stress": projection.stress,
+                "warning": projection.stress > 0.10,
+            },
         }
 
     @app.get("/thumb/{idx}")
