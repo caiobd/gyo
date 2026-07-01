@@ -8,6 +8,7 @@ __pycache__/
 .venv/
 .pytest_cache/
 .coverage
+.worktrees/
 
 # Generated pipeline data (downloads, images, embeddings, codes)
 run/
