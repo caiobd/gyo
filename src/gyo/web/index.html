@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>gyo — RQ embedding inspector</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">gyo <small>vi</small></div>
+    <div class="crumbs" id="crumbs"></div>
+    <div class="stat">janela <b id="winstat">—</b></div>
+    <div class="stat">dead <b id="dead">—</b></div>
+    <div class="legend"><span>resíduo</span><div class="bar"></div><span>baixo→alto</span></div>
+    <span class="crumb" id="modeBtn" title="tecla C">modo: resíduo</span>
+  </header>
+
+  <div id="stage">
+    <div id="rail" title="profundidade — clique pra pular"></div>
+    <div id="icicle"><div id="scroller"></div></div>
+    <div class="fade fade-top"></div>
+    <div class="fade fade-bot"></div>
+  </div>
+
+  <div id="tip"></div>
+
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>

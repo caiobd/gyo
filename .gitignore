@@ -1,0 +1,19 @@
+.superpowers/sdd/
+.superpowers/brainstorm/
+
+# Language and dependency artifacts
+node_modules/
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.coverage
+
+# Generated pipeline data (downloads, images, embeddings, codes)
+run/
+
+# Local tool config
+opencode.json
+
+# Playwright MCP scratch
+.playwright-mcp/

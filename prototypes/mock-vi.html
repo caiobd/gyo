@@ -1,0 +1,556 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>gyo vi — mock</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --bg2: #161b22;
+    --line: #232a33;
+    --fg: #e6edf3;
+    --muted: #8b949e;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  /* ---- top bar ---- */
+  header {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--line);
+    background: var(--bg2);
+    flex: none;
+  }
+  .brand { font-weight: 700; font-size: 15px; letter-spacing: .3px; }
+  .brand small { color: var(--muted); font-weight: 400; font-size: 11px; margin-left: 6px; }
+
+  .crumbs { display: flex; align-items: center; gap: 4px; flex: 1; min-width: 0; overflow: hidden; }
+  .crumb {
+    cursor: pointer; padding: 3px 8px; border-radius: 5px; white-space: nowrap;
+    color: var(--fg); background: #1f2630; border: 1px solid var(--line);
+  }
+  .crumb:hover { background: #2a323d; }
+  .crumb.active { background: #2d3a2e; border-color: #3d5c41; cursor: default; }
+  .crumb-sep { color: var(--muted); }
+
+  .stat { color: var(--muted); white-space: nowrap; }
+  .stat b { color: var(--fg); font-variant-numeric: tabular-nums; }
+
+  .legend { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+  .legend .bar {
+    width: 120px; height: 10px; border-radius: 5px;
+    background: linear-gradient(90deg, #00d4aa, #ffeaa7, #ff6b6b);
+  }
+  .legend span { color: var(--muted); font-size: 11px; }
+
+  /* ---- icicle ---- */
+  #stage { position: relative; flex: 1; overflow: hidden; }
+  #icicle { position: absolute; inset: 12px 12px 12px 42px; overflow: hidden; }
+  #scroller { position: absolute; left: 0; right: 0; top: 0; transition: transform .26s ease; will-change: transform; }
+  /* soft fades at the window edges to signal there's more above/below */
+  .fade { position: absolute; left: 42px; right: 12px; height: 26px; pointer-events: none; z-index: 4; }
+  .fade-top { top: 12px; background: linear-gradient(var(--bg), transparent); }
+  .fade-bot { bottom: 28px; background: linear-gradient(transparent, var(--bg)); }
+
+  /* depth rail */
+  #rail { position: absolute; left: 10px; top: 12px; bottom: 12px; width: 24px; display: flex; flex-direction: column; gap: 2px; }
+  .rail-tick {
+    flex: 1; min-height: 14px; border-radius: 4px; background: #1b2129; border: 1px solid var(--line);
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    font-size: 9px; color: var(--muted); font-variant-numeric: tabular-nums;
+  }
+  .rail-tick:hover { border-color: #4a9eff; color: var(--fg); }
+  .rail-tick.active { background: #2d3a2e; border-color: #3d5c41; color: #cfe9d2; font-weight: 700; }
+
+  .node.peek { opacity: .5; }
+  .node.peek:hover { opacity: .85; }
+
+  .node {
+    position: absolute;
+    border-radius: 6px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: left .28s ease, width .28s ease, top .28s ease, height .28s ease;
+    border: 1px solid rgba(0,0,0,.35);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.04);
+  }
+  .node:hover { box-shadow: inset 0 0 0 1px rgba(255,255,255,.4); z-index: 5; }
+  .node .nlabel {
+    position: absolute; left: 5px; top: 5px; max-width: calc(100% - 10px); z-index: 2;
+    font-weight: 600; font-size: 12px; color: #fff;
+    background: rgba(8,11,16,.6); padding: 2px 7px; border-radius: 5px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    pointer-events: none;
+  }
+  .node .nocc {
+    position: absolute; right: 5px; top: 5px; z-index: 2;
+    font-size: 11px; font-variant-numeric: tabular-nums; color: #fff;
+    background: rgba(8,11,16,.5); padding: 2px 6px; border-radius: 5px;
+    pointer-events: none;
+  }
+  .node .purity {
+    position: absolute; left: 0; bottom: 0; height: 3px;
+    background: rgba(0,0,0,.45); pointer-events: none;
+  }
+  /* branch identity: a colored cap shared by every node in the same branch */
+  .node .branchcap {
+    position: absolute; left: 0; right: 0; top: 0; height: 4px; z-index: 1;
+    pointer-events: none;
+  }
+  .node.dead {
+    background: repeating-linear-gradient(45deg, #1a1f26, #1a1f26 6px, #121821 6px, #121821 12px) !important;
+    border-style: dashed; border-color: #3a4350; cursor: default;
+  }
+  .node.dead .nlabel { color: var(--muted); text-shadow: none; }
+
+  /* collapsed group → thin vertical spine, stays in place */
+  .node.spine { cursor: zoom-in; display: flex; align-items: center; justify-content: center; }
+  .node.spine .spinelabel {
+    writing-mode: vertical-rl; text-orientation: mixed;
+    font-weight: 700; font-size: 11px; color: rgba(0,0,0,.8);
+    text-shadow: 0 1px 0 rgba(255,255,255,.25);
+    white-space: nowrap; overflow: hidden; max-height: calc(100% - 26px);
+    pointer-events: none;
+  }
+  .node.spine::after {
+    content: "⊞"; position: absolute; top: 5px; left: 50%; transform: translateX(-50%);
+    font-size: 12px; color: rgba(0,0,0,.65); pointer-events: none;
+  }
+  .node.spine .nocc { left: 50%; right: auto; transform: translateX(-50%); top: auto; bottom: 5px; padding: 1px 4px; }
+
+  /* thumbnails inside a node */
+  .thumbs { position: absolute; inset: 26px 5px 6px 5px; display: flex; flex-wrap: wrap; gap: 3px; align-content: flex-start; overflow: hidden; pointer-events: none; }
+  .thumb {
+    border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: inset 0 0 0 1px rgba(0,0,0,.25);
+  }
+
+  /* tooltip */
+  #tip {
+    position: fixed; z-index: 50; pointer-events: none; display: none;
+    background: #0b0e13; border: 1px solid var(--line); border-radius: 8px;
+    padding: 9px 11px; min-width: 180px; box-shadow: 0 8px 24px rgba(0,0,0,.5);
+  }
+  #tip .t-title { font-weight: 700; margin-bottom: 6px; }
+  #tip .t-row { display: flex; justify-content: space-between; gap: 16px; color: var(--muted); }
+  #tip .t-row b { color: var(--fg); font-variant-numeric: tabular-nums; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; vertical-align: middle; margin-right: 4px; }
+
+  .hint { position: absolute; right: 16px; bottom: 12px; color: var(--muted); font-size: 11px; background: rgba(11,14,19,.7); padding: 4px 9px; border-radius: 6px; }
+</style>
+</head>
+<body>
+  <header>
+    <div class="brand">gyo vi <small>mock</small></div>
+    <div class="crumbs" id="crumbs"></div>
+    <div class="stat">janela <b id="winstat">1–3 / 4</b></div>
+    <div class="stat">dead <b id="dead">[0,1,0,2]</b></div>
+    <div class="legend"><span>resíduo</span><div class="bar"></div><span>baixo→alto</span></div>
+    <span class="crumb" id="modeBtn" title="tecla C">modo: imagens</span>
+  </header>
+
+  <div id="stage">
+    <div id="rail" title="profundidade — clique pra pular"></div>
+    <div id="icicle"><div id="scroller"></div></div>
+    <div class="fade fade-top"></div>
+    <div class="fade fade-bot"></div>
+    <div class="hint">scroll / ↑↓ desliza a janela de 3 níveis · 1 clique colapsa · 2 cliques entra · tecla C imagens/resíduo</div>
+  </div>
+
+  <div id="tip"></div>
+
+<script>
+// ---------- deterministic RNG ----------
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+const rng = mulberry32(7);
+
+const FLOWERS = [
+  ["tiger lily","🌷","#e67e22"],["marigold","🌼","#f1c40f"],["blanket flower","🌻","#e74c3c"],
+  ["sunflower","🌻","#f39c12"],["daisy","🌼","#ecf0f1"],["rose","🌹","#e84393"],
+  ["tulip","🌷","#d63031"],["orchid","🪷","#a29bfe"],["lotus","🪷","#fd79a8"],
+  ["poppy","🌺","#ff7675"],["iris","🌸","#6c5ce7"],["peony","🌸","#fab1a0"],
+];
+const pick = arr => arr[Math.floor(rng()*arr.length)];
+
+// ---------- build a fake RQ tree ----------
+let codewordPool = [0,3,4,5,6,8,10,12,13,14,15];
+function nextCode(){ return codewordPool[Math.floor(rng()*codewordPool.length)]; }
+
+function makeLeaf(){
+  const fl = pick(FLOWERS);
+  const occ = 3 + Math.floor(rng()*26);
+  const images = [];
+  let dominant = 0;
+  for (let i=0;i<occ;i++){
+    const off = rng() < 0.18;
+    const f = off ? pick(FLOWERS) : fl;
+    if (f[0] === fl[0]) dominant++;
+    images.push(f[0]);
+  }
+  return { code: nextCode(), label: fl[0], leaf:true, occ, residual: 0.05 + rng()*0.92,
+           images, purity: dominant/occ };
+}
+
+function makeNode(depth, maxDepth){
+  if (depth >= maxDepth) return makeLeaf();
+  const n = 2 + Math.floor(rng()*2);
+  const children = [];
+  const used = new Set();
+  for (let i=0;i<n;i++){ const c = makeNode(depth+1, maxDepth); children.push(c); }
+  // unique-ish codes per sibling group
+  children.forEach(c => { let g=c.code; while(used.has(g)) g=nextCode(); used.add(g); c.code=g; });
+  return { code: nextCode(), children, leaf:false };
+}
+
+function aggregate(node){
+  if (node.leaf) return node;
+  node.children.forEach(aggregate);
+  node.occ = node.children.reduce((s,c)=>s+c.occ,0);
+  // images bubble up so every node can show a sampled mosaic of its contents
+  node.images = [];
+  for (const c of node.children) if (!c.dead && c.images) node.images = node.images.concat(c.images);
+  // residual of an internal node = mean residual over all items beneath it
+  node.residual = node.children.reduce((s,c)=>s+c.occ*c.residual,0) / node.occ;
+  // purity ~ weighted child purity (rough)
+  node.purity = node.children.reduce((s,c)=>s+c.occ*(c.purity||0),0) / node.occ;
+  return node;
+}
+
+// root: a handful of level-1 branches
+const root = { code:null, children:[], leaf:false, isRoot:true };
+const labels1 = [4,10,14,8,13,15];
+for (const code of labels1){ const c = makeNode(1, 5); c.code = code; root.children.push(c); }
+aggregate(root);
+root.label = "root";
+
+// parent pointers + prefixes
+(function link(node, parent, prefix){
+  node.parent = parent;
+  node.prefix = prefix;
+  (node.children||[]).forEach(c => link(c, node, node.isRoot ? [c.code] : prefix.concat(c.code)));
+})(root, null, []);
+
+// global residual range for color normalization
+let allRes = [];
+(function collect(n){ if(!n.dead) allRes.push(n.residual); (n.children||[]).forEach(collect); })(root);
+const rLo = Math.min(...allRes), rHi = Math.max(...allRes), rSpan = (rHi-rLo)||1;
+const norm = r => (r - rLo)/rSpan;
+
+// ---------- residual color (same scheme as the app) ----------
+function residualColor(t){
+  t = Math.max(0, Math.min(1, t));
+  const g=[0,212,170], y=[255,234,167], r=[255,107,107];
+  let a,b,u;
+  if (t<0.5){ a=g; b=y; u=t/0.5; } else { a=y; b=r; u=(t-0.5)/0.5; }
+  const c = a.map((v,i)=>Math.round(v+(b[i]-v)*u));
+  return `rgb(${c[0]},${c[1]},${c[2]})`;
+}
+function flowerColor(name){ const f = FLOWERS.find(x=>x[0]===name); return f?f[2]:"#888"; }
+function flowerEmoji(name){ const f = FLOWERS.find(x=>x[0]===name); return f?f[1]:"·"; }
+
+// ---------- state ----------
+let focus = root;
+let mode = "images";       // "images" mosaic | "residual" pure color bands
+let clickTimer = null;     // disambiguate single (collapse) vs double (drill) click
+let winTop = 1;            // top level of the sliding window (depth from focus)
+let maxDepth = 1;          // deepest level under focus (recomputed each render)
+const WIN = 3;             // levels visible at once
+// distinct hue per branch (immediate subtrees of the focused node)
+const BRANCH_COLORS = ["#4a9eff","#00d4aa","#ff6b6b","#ffd166","#c792ea","#f78c6c","#7fdbca","#82aaff","#f48fb1","#a5d6a7"];
+
+const icicle = document.getElementById("icicle");
+const scroller = document.getElementById("scroller");
+const railEl = document.getElementById("rail");
+const crumbsEl = document.getElementById("crumbs");
+const tip = document.getElementById("tip");
+const PEEK = 24;           // px of the level above/below peeking past the window
+let ROW_H = 0;             // height of one full level (set in render)
+
+const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
+function prefixText(node){ return node.isRoot ? "root" : "c_"+node.prefix.join(","); }
+function depthOf(node){
+  if (!node.children || node.leaf || !node.children.length) return 0;
+  let m = 0;
+  for (const c of node.children) if (!c.dead) m = Math.max(m, depthOf(c));
+  return 1 + m;
+}
+function maxWinTop(){ return Math.max(0, maxDepth - WIN + 1); }
+// continuous scroll offset (px); free-follows the wheel, snaps to a level on stop
+let scrollPx = PEEK;
+const scrollMax = () => PEEK;                          // winTop = 0
+const scrollMin = () => PEEK - maxWinTop()*ROW_H;      // winTop = maxWinTop
+const winTopFromScroll = () => clamp(Math.round((PEEK - scrollPx) / ROW_H), 0, maxWinTop());
+function setScrollPx(px, animate){
+  scrollPx = clamp(px, scrollMin(), scrollMax());
+  scroller.style.transition = animate ? "transform .22s ease" : "none";
+  scroller.style.transform = `translateY(${scrollPx}px)`;
+}
+function updateWinStat(){
+  document.getElementById("winstat").textContent = `${winTop}–${Math.min(winTop+WIN-1, maxDepth)} / ${maxDepth}`;
+}
+function setWinTop(nv, animate){          // discrete jumps (keys, rail clicks)
+  winTop = clamp(nv, 0, maxWinTop());
+  setScrollPx(PEEK - winTop*ROW_H, animate);
+  renderRail();
+  updateWinStat();
+}
+function slide(d){ setWinTop(winTop + d, true); }
+function setFocus(node){ if (node.dead) return; focus = node; maxDepth = depthOf(node); winTop = clamp(1, 0, maxWinTop()); render(); }
+
+// ---------- layout + render ----------
+function render(){
+  scroller.innerHTML = "";
+  const W = icicle.clientWidth, H = icicle.clientHeight;
+  maxDepth = depthOf(focus);
+  winTop = clamp(winTop, 0, maxWinTop());
+  ROW_H = Math.max(70, (H - 2*PEEK) / WIN);
+  scroller.style.height = (maxDepth+1)*ROW_H + "px";
+  const placed = [];
+
+  const SPINE_W = 18, DEAD_W = 12;
+  (function layout(node, x, w, depth, branch){
+    const isSpine = node.collapsed && node !== focus;
+    placed.push({node, x, w, depth, spine:isSpine, branch});
+    if (isSpine || node.leaf || !node.children) return;
+    // collapsed/dead siblings take a fixed sliver; the rest share width by occupancy
+    let fixed = 0, nExpanded = 0;
+    for (const c of node.children){
+      if (c.dead) fixed += DEAD_W;
+      else if (c.collapsed) fixed += SPINE_W;
+      else nExpanded++;
+    }
+    // gutter between siblings — wider at shallow splits → branches read as
+    // full-height corridors, narrowing for sub-branches deeper down
+    const GAP = Math.max(2, 18 - depth*6);  // branch corridor between expanded siblings
+    const SMALL_GAP = 2;                     // minimized/sliver items hug together
+    // collapsed groups slide to the left; expanded ones keep their order on the right
+    const ordered = node.children.slice().sort(
+      (a,b) => ((a.collapsed && !a.dead) ? 0 : 1) - ((b.collapsed && !b.dead) ? 0 : 1)
+    );
+    const isSliver = c => (c.collapsed && !c.dead) || c.dead;
+    const gapBetween = (a,b) => (isSliver(a) || isSliver(b)) ? SMALL_GAP : GAP;
+    let gapsTotal = 0;
+    for (let i=0;i<ordered.length-1;i++) gapsTotal += gapBetween(ordered[i], ordered[i+1]);
+    const avail = Math.max(0, w - fixed - gapsTotal);
+    const eachW = nExpanded ? avail / nExpanded : 0;  // expanded siblings share width equally
+    let cx = x;
+    ordered.forEach((c, i) => {
+      let cw = c.dead ? DEAD_W : c.collapsed ? SPINE_W : eachW;
+      // each immediate subtree of the focus gets its own hue, inherited by descendants
+      const cb = depth === 0 ? BRANCH_COLORS[node.children.indexOf(c) % BRANCH_COLORS.length] : branch;
+      layout(c, cx, cw, depth+1, cb);
+      cx += cw + (i < ordered.length-1 ? gapBetween(c, ordered[i+1]) : 0);
+    });
+  })(focus, 0, W, 0, null);
+
+  for (const p of placed){
+    const {node, x, w, depth} = p;
+    const el = document.createElement("div");
+    el.className = "node" + (node.dead ? " dead" : "") + (p.spine ? " spine" : "");
+    el.style.left = x + "px";
+    el.style.width = Math.max(w-3, node.dead?10:6) + "px";
+    el.style.top = depth*ROW_H + "px";
+    // a spine folds its whole subtree → spans down to the bottom of the tree
+    el.style.height = ((p.spine ? (maxDepth+1-depth) : 1)*ROW_H - 8) + "px";
+
+    if (p.branch && !node.dead){
+      const cap = document.createElement("div");
+      cap.className = "branchcap";
+      cap.style.background = p.branch;
+      el.appendChild(cap);
+    }
+
+    if (p.spine){
+      el.style.background = residualColor(norm(node.residual));
+      const lab = document.createElement("div");
+      lab.className = "spinelabel";
+      lab.textContent = (node.isRoot ? "root" : "c"+node.code);
+      el.appendChild(lab);
+      const occ = document.createElement("div");
+      occ.className = "nocc";
+      occ.textContent = node.occ;
+      el.appendChild(occ);
+      el.title = "expandir " + prefixText(node);
+      el.addEventListener("click", e => { e.stopPropagation(); node.collapsed = false; render(); });
+      el.addEventListener("mousemove", e => showTip(e, node));
+      el.addEventListener("mouseleave", hideTip);
+      scroller.appendChild(el);
+      continue;
+    }
+
+    if (!node.dead){
+      el.style.background = residualColor(norm(node.residual));
+
+      const lab = document.createElement("div");
+      lab.className = "nlabel";
+      lab.textContent = (node.isRoot ? "root" : "c"+node.code) + (node.leaf ? " · "+node.label : "");
+      el.appendChild(lab);
+
+      const occ = document.createElement("div");
+      occ.className = "nocc";
+      occ.textContent = node.occ;
+      el.appendChild(occ);
+
+      // sampled image mosaic — shown at EVERY level so no band is empty.
+      // deeper nodes get bigger tiles (fewer, larger) → continuous "dive".
+      const tile = Math.max(11, Math.min(34, Math.round(11 + depth*6)));
+      const gap = 3;
+      const innerW = w - 12, innerH = (ROW_H - 8) - 30;
+      const cols = Math.floor((innerW + gap) / (tile + gap));
+      const rows = Math.floor((innerH + gap) / (tile + gap));
+      const slots = Math.max(0, cols * rows);
+      if (mode === "images" && slots >= 2 && node.images && node.images.length){
+        const box = document.createElement("div");
+        box.className = "thumbs";
+        const imgs = node.images, n = imgs.length;
+        const count = Math.min(slots, n);
+        const step = n / count;
+        for (let s=0; s<count; s++){
+          const name = imgs[Math.min(n-1, Math.floor(s*step))];
+          const t = document.createElement("div");
+          t.className = "thumb";
+          t.style.width = t.style.height = tile + "px";
+          t.style.fontSize = Math.round(tile*0.62) + "px";
+          t.style.background = flowerColor(name);
+          t.textContent = flowerEmoji(name);
+          box.appendChild(t);
+        }
+        el.appendChild(box);
+      }
+
+      const pur = document.createElement("div");
+      pur.className = "purity";
+      pur.style.width = ((node.purity||0)*100) + "%";
+      el.appendChild(pur);
+
+      // single click collapses this group; double click drills into it
+      el.style.cursor = node.isRoot ? "default" : "zoom-out";
+      el.addEventListener("click", e => {
+        e.stopPropagation();
+        if (node.isRoot) return;
+        if (clickTimer) clearTimeout(clickTimer);
+        clickTimer = setTimeout(() => { node.collapsed = true; render(); }, 220);
+      });
+      el.addEventListener("dblclick", e => {
+        e.stopPropagation();
+        if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+        if (!node.leaf) setFocus(node);   // re-root (drill)
+      });
+      el.addEventListener("mousemove", e => showTip(e, node));
+      el.addEventListener("mouseleave", hideTip);
+    } else {
+      const lab = document.createElement("div");
+      lab.className = "nlabel";
+      lab.textContent = "c"+node.code+" ∅ dead";
+      el.appendChild(lab);
+      el.addEventListener("mousemove", e => showTip(e, node));
+      el.addEventListener("mouseleave", hideTip);
+    }
+
+    scroller.appendChild(el);
+  }
+  setScrollPx(PEEK - winTop*ROW_H, false);   // position the window (no animation on rebuild)
+  renderCrumbs();
+  renderRail();
+  updateWinStat();
+}
+
+function renderRail(){
+  railEl.innerHTML = "";
+  for (let d=0; d<=maxDepth; d++){
+    const t = document.createElement("div");
+    t.className = "rail-tick" + (d>=winTop && d<winTop+WIN ? " active" : "");
+    t.textContent = d;
+    t.title = "nível " + d;
+    t.addEventListener("click", () => setWinTop(d, true));
+    railEl.appendChild(t);
+  }
+}
+
+function zoomTo(node){ setFocus(node); }
+
+function renderCrumbs(){
+  crumbsEl.innerHTML = "";
+  const path = [];
+  let n = focus;
+  while (n){ path.unshift(n); n = n.parent; }
+  path.forEach((node, i) => {
+    if (i>0){ const s = document.createElement("span"); s.className="crumb-sep"; s.textContent="›"; crumbsEl.appendChild(s); }
+    const c = document.createElement("span");
+    c.className = "crumb" + (node===focus ? " active":"");
+    c.textContent = prefixText(node);
+    if (node!==focus) c.addEventListener("click", ()=>zoomTo(node));
+    crumbsEl.appendChild(c);
+  });
+}
+
+// ---------- tooltip ----------
+function showTip(e, node){
+  const col = node.dead ? "#3a4350" : residualColor(norm(node.residual));
+  tip.style.display = "block";
+  tip.innerHTML = `
+    <div class="t-title">${prefixText(node)}</div>
+    <div class="t-row"><span>occupancy</span><b>${node.occ}</b></div>
+    <div class="t-row"><span>resíduo</span><b><span class="dot" style="background:${col}"></span>${node.dead?"—":node.residual.toFixed(3)}</b></div>
+    <div class="t-row"><span>purity</span><b>${node.dead?"—":(node.purity*100).toFixed(0)+"%"}</b></div>
+    ${node.leaf&&!node.dead?`<div class="t-row"><span>label</span><b>${node.label}</b></div>`:""}
+    ${node.dead?`<div class="t-row"><span>status</span><b>dead codeword</b></div>`:""}
+  `;
+  const pad = 14;
+  let x = e.clientX + pad, y = e.clientY + pad;
+  if (x + 210 > innerWidth) x = e.clientX - 210;
+  if (y + 120 > innerHeight) y = e.clientY - 120;
+  tip.style.left = x+"px"; tip.style.top = y+"px";
+}
+function hideTip(){ tip.style.display = "none"; }
+
+function toggleMode(){
+  mode = mode === "images" ? "residual" : "images";
+  document.getElementById("modeBtn").textContent = "modo: " + (mode === "images" ? "imagens" : "resíduo");
+  render();
+}
+document.getElementById("modeBtn").addEventListener("click", toggleMode);
+
+// ---------- sliding-window controls ----------
+// free-follow the wheel continuously (no transition while scrolling), then snap
+// to the nearest level once scrolling stops
+let snapTimer = null;
+icicle.addEventListener("wheel", e => {
+  e.preventDefault();
+  setScrollPx(scrollPx - e.deltaY, false);   // follows the wheel 1:1, instantly
+  winTop = winTopFromScroll();               // live rail/stat feedback
+  renderRail(); updateWinStat();
+  if (snapTimer) clearTimeout(snapTimer);
+  snapTimer = setTimeout(() => {
+    winTop = winTopFromScroll();
+    setScrollPx(PEEK - winTop*ROW_H, true);   // animated snap on stop
+    renderRail(); updateWinStat();
+  }, 130);
+}, { passive:false });
+addEventListener("keydown", e => {
+  if (e.key.toLowerCase() === "c") toggleMode();
+  else if (e.key === "ArrowDown"){ e.preventDefault(); slide(1); }
+  else if (e.key === "ArrowUp"){ e.preventDefault(); slide(-1); }
+});
+
+addEventListener("resize", render);
+maxDepth = depthOf(focus);
+winTop = clamp(1, 0, maxWinTop());
+render();
+</script>
+</body>
+</html>
