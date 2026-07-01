@@ -15,6 +15,7 @@ from gyo.atlas import (
     sibling_distance_matrix,
 )
 from gyo.io.store import load_table
+from gyo.rq.quantizer import ResidualQuantizer
 from gyo.tree.build import build_tree, node_at
 from gyo.tree.signals import node_stats, dead_codeword_counts
 
@@ -25,10 +26,11 @@ def create_app(data_dir: str) -> FastAPI:
     data_dir = Path(data_dir)
     app = FastAPI(title="gyo")
     data_cache = None
+    identity_cache = None
     atlas_cache = None
 
     def _load():
-        nonlocal data_cache
+        nonlocal data_cache, identity_cache
         if data_cache is not None:
             return data_cache
         codes_df = load_table(data_dir / "codes.parquet")
@@ -36,14 +38,32 @@ def create_app(data_dir: str) -> FastAPI:
         level_cols = [c for c in codes_df.columns if c.startswith("c_")]
         codes = codes_df[sorted(level_cols)].to_numpy(np.int64)
         final_res = codes_df["final_residual"].to_numpy(np.float32)
-        if "label" in meta_df:
-            label_values = meta_df["label"]
-            labels = [
-                None if missing else str(value)
-                for value, missing in zip(label_values, label_values.isna())
-            ]
-        else:
-            labels = [None] * len(meta_df)
+        item_ids = (
+            [int(value) for value in codes_df["idx"]]
+            if "idx" in codes_df
+            else list(range(len(codes_df)))
+        )
+        meta_ids = (
+            [int(value) for value in meta_df["idx"]]
+            if "idx" in meta_df
+            else list(range(len(meta_df)))
+        )
+        meta_by_id = {
+            item_id: meta_df.iloc[position]
+            for position, item_id in enumerate(meta_ids)
+        }
+        labels = []
+        for item_id in item_ids:
+            row = meta_by_id.get(item_id)
+            if (
+                row is None
+                or "label" not in row
+                or bool(row[["label"]].isna().iloc[0])
+            ):
+                labels.append(None)
+            else:
+                labels.append(str(row["label"]))
+        identity_cache = (tuple(item_ids), meta_by_id)
         data_cache = (codes, final_res, labels, meta_df)
         return data_cache
 
@@ -52,7 +72,7 @@ def create_app(data_dir: str) -> FastAPI:
         if atlas_cache is not None:
             return atlas_cache
 
-        codes, final_res, labels, meta_df = _load()
+        codes, final_res, labels, _ = _load()
         embeddings_path = data_dir / "embeddings.npy"
         config_path = data_dir / "codebooks" / "v1" / "config.json"
         if not embeddings_path.exists():
@@ -62,15 +82,19 @@ def create_app(data_dir: str) -> FastAPI:
 
         config = json.loads(config_path.read_text())
         num_levels = int(config.get("num_levels", codes.shape[1]))
-        codebooks = []
         for level in range(num_levels):
             path = config_path.parent / f"level_{level}.npy"
             if not path.exists():
                 raise HTTPException(409, f"required Atlas input missing: {path.name}")
-            codebooks.append(np.load(path))
+        rq = ResidualQuantizer.load(config_path.parent)
         embeddings = np.load(embeddings_path)
+        item_ids, meta_by_id = identity_cache
+        missing_ids = [item_id for item_id in item_ids if item_id not in meta_by_id]
+        if missing_ids:
+            missing = ", ".join(str(item_id) for item_id in missing_ids[:20])
+            raise HTTPException(409, f"metadata missing for item ids: {missing}")
         root = build_tree(codes, final_res, labels)
-        atlas_cache = (root, labels, meta_df, embeddings, tuple(codebooks))
+        atlas_cache = (root, labels, embeddings, rq, item_ids, meta_by_id)
         return atlas_cache
 
     @app.get("/", response_class=HTMLResponse)
@@ -177,7 +201,8 @@ def create_app(data_dir: str) -> FastAPI:
             except ValueError as exc:
                 raise HTTPException(400, "prefix must be 'root' or CSV integers") from exc
 
-        root, labels, meta_df, embeddings, codebooks = _load_atlas()
+        root, labels, embeddings, rq, item_ids, meta_by_id = _load_atlas()
+        codebooks = rq.codebooks
         target = node_at(root, pfx)
         if target is None:
             raise HTTPException(404, "prefix not found")
@@ -185,10 +210,11 @@ def create_app(data_dir: str) -> FastAPI:
         stats_by_prefix = {stat.prefix: stat for stat in node_stats(root, labels)}
 
         def item(position):
-            row = meta_df.iloc[position]
+            item_id = item_ids[position]
+            row = meta_by_id[item_id]
             label = labels[position]
             return {
-                "idx": int(position),
+                "idx": item_id,
                 "path": str(row["path"]),
                 "label": label,
             }

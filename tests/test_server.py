@@ -39,7 +39,15 @@ def _seed_run(data_dir):
     np.save(codebook_dir / "level_0.npy", np.asarray([[0.0, 0.0], [2.0, 0.0]]))
     np.save(codebook_dir / "level_1.npy", np.asarray([[0.0, 0.0], [0.0, 1.0]]))
     (codebook_dir / "config.json").write_text(
-        json.dumps({"num_levels": 2, "codebook_size": 2, "dim": 2})
+        json.dumps(
+            {
+                "num_levels": 2,
+                "codebook_size": 2,
+                "dim": 2,
+                "proj_dim": None,
+                "seed": 0,
+            }
+        )
     )
 
 
@@ -153,3 +161,37 @@ def test_atlas_missing_inputs_are_conflicts(tmp_path):
     response = TestClient(create_app(str(tmp_path))).get("/api/atlas/root")
     assert response.status_code == 409
     assert "level_1.npy" in response.json()["detail"]
+
+
+def test_atlas_joins_metadata_by_item_id(tmp_path):
+    _seed_run(tmp_path)
+    codes = pd.read_parquet(tmp_path / "codes.parquet")
+    codes["idx"] = [10, 20, 30]
+    codes.to_parquet(tmp_path / "codes.parquet", index=False)
+    pd.DataFrame(
+        {
+            "idx": [30, 10, 20],
+            "path": ["id-30.png", "id-10.png", "id-20.png"],
+            "label": ["thirty", "ten", "twenty"],
+        }
+    ).to_parquet(tmp_path / "meta.parquet", index=False)
+
+    response = TestClient(create_app(str(tmp_path))).get("/api/atlas/root")
+    assert response.status_code == 200
+    items = response.json()["focus"]["samples"]["representative"]
+    assert {(item["idx"], item["path"], item["label"]) for item in items} == {
+        (10, "id-10.png", "ten"),
+        (20, "id-20.png", "twenty"),
+        (30, "id-30.png", "thirty"),
+    }
+
+
+def test_atlas_rejects_codes_without_metadata(tmp_path):
+    _seed_run(tmp_path)
+    meta = pd.read_parquet(tmp_path / "meta.parquet")
+    meta.iloc[:2].to_parquet(tmp_path / "meta.parquet", index=False)
+
+    response = TestClient(create_app(str(tmp_path))).get("/api/atlas/root")
+    assert response.status_code == 409
+    assert "metadata" in response.json()["detail"]
+    assert "2" in response.json()["detail"]
