@@ -5,7 +5,7 @@
   <title>gyo — Semantic Atlas</title><link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <header class="topbar"><a class="brand" href="#">gyo <span>Semantic Atlas</span></a><nav id="breadcrumbs" aria-label="Atlas path"></nav><output id="projectionStatus"></output></header>
+  <header class="topbar"><a class="brand" href="#" aria-label="Open atlas root">gyo <span>Semantic Atlas</span></a><nav id="breadcrumbs" aria-label="Atlas path"></nav><output id="projectionStatus" class="projection-status"></output></header>
   <main class="workspace">
     <section class="map-panel" aria-label="Semantic map">
       <div class="map-toolbar"><button id="backBtn" type="button">Back</button><button id="resetViewBtn" type="button">Reset view</button></div>
@@ -15,6 +15,6 @@
     </section>
     <aside id="inspector" class="inspector" aria-live="polite" aria-label="Territory inspector"><p class="inspector-empty">Select a territory to inspect it.</p></aside>
   </main>
-  <template id="imageTemplate"><figure><div class="thumb-slot"></div><figcaption></figcaption></figure></template>
+  <template id="imageTemplate"><figure class="sample"><div class="skeleton"></div><img loading="lazy"><figcaption></figcaption></figure></template>
   <script type="module" src="/js/main.js"></script>
 </body></html>

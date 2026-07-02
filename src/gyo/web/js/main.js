@@ -93,10 +93,11 @@ export function startAtlas(doc = document, win = window) {
       error.hidden = false; if (!successful) svg.replaceChildren();
     } finally { if (guard.isCurrent(request.id) && !destroyed) loading.hidden = true; }
   }
-  function endDrag(event) {
+  function endDrag(event, mayClick) {
     if (!drag || event.pointerId !== drag.pointerId) return;
-    if (drag.moved) suppressClick = true;
-    const pointerId = drag.pointerId; drag = null; svg.releasePointerCapture?.(pointerId);
+    if (mayClick && drag.moved) suppressClick = true;
+    const pointerId = drag.pointerId; drag = null;
+    if (typeof svg.hasPointerCapture === "function" && svg.hasPointerCapture(pointerId)) svg.releasePointerCapture?.(pointerId);
   }
 
   on(retry, "click", () => load(currentPrefix, true));
@@ -117,7 +118,9 @@ export function startAtlas(doc = document, win = window) {
     const dx = event.clientX - drag.x, dy = event.clientY - drag.y; if (Math.hypot(dx, dy) < 5 && !drag.moved) return; drag.moved = true;
     const rect = svg.getBoundingClientRect(); view = { ...view, x: drag.view.x - dx / rect.width * drag.view.width, y: drag.view.y - dy / rect.height * drag.view.height }; applyView();
   });
-  on(svg, "pointerup", endDrag); on(svg, "pointercancel", endDrag); on(svg, "lostpointercapture", endDrag);
+  on(svg, "pointerup", event => endDrag(event, true));
+  on(svg, "pointercancel", event => endDrag(event, false));
+  on(svg, "lostpointercapture", event => endDrag(event, false));
 
   function destroy() { if (destroyed) return; destroyed = true; guard.abort(); clearTimeout(resizeTimer); cancelMapInteractions(svg); removers.splice(0).forEach(remove => remove()); }
   load(); return { load, render: renderAll, destroy };

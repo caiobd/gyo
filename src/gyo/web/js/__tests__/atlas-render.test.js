@@ -19,12 +19,19 @@ describe("semantic atlas renderer", () => {
     const territory = svg.querySelector('[role="treeitem"]');
     expect(territory?.getAttribute("tabindex")).toBe("0");
     expect(territory?.getAttribute("aria-selected")).toBe("true");
+    expect(territory?.dataset.prefix).toBe("2");
     expect(svg.querySelector("img")).toBeNull();
     territory.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     territory.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     territory.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
     expect(handlers.select).toHaveBeenCalledWith(expect.objectContaining({ prefix: [2] }));
     expect(handlers.enter).toHaveBeenCalledWith(expect.objectContaining({ prefix: [2] }));
+  });
+
+  it("sets a supplied initial SVG viewport", () => {
+    const svg = document.createElementNS(SVG, "svg");
+    renderMap(svg, [], { selected: null }, { width: 720, height: 480 });
+    expect(svg.getAttribute("viewBox")).toBe("0 0 720 480");
   });
 
   it("renders inspector text without injection and omits unavailable metrics", () => {

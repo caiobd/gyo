@@ -85,4 +85,20 @@ describe("atlas orchestration", () => {
     svg.dispatchEvent(new Event("wheel", { cancelable: true }));
     expect(svg.getAttribute("viewBox")).toBeNull();
   });
+
+  it.each(["pointercancel", "lostpointercapture"])("does not suppress a genuine click after %s", async eventType => {
+    const svg = shell();
+    svg.hasPointerCapture = vi.fn(() => false);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true, json: async () => payload([], [child]) });
+    vi.useFakeTimers(); const app = startAtlas(); await vi.runAllTimersAsync();
+    const pointer = (type, values) => { const event = new Event(type, { bubbles: true }); Object.assign(event, values); return event; };
+    svg.dispatchEvent(pointer("pointerdown", { pointerId: 5, clientX: 10, clientY: 10 }));
+    svg.dispatchEvent(pointer("pointermove", { pointerId: 5, clientX: 30, clientY: 30 }));
+    expect(() => svg.dispatchEvent(pointer(eventType, { pointerId: 5 }))).not.toThrow();
+    svg.querySelector(".territory").dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await vi.runAllTimersAsync();
+    expect(document.getElementById("inspector").textContent).toContain("Group 1");
+    expect(svg.releasePointerCapture).not.toHaveBeenCalled();
+    app.destroy(); vi.useRealTimers();
+  });
 });

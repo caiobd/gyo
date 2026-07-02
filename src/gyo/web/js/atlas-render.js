@@ -1,4 +1,5 @@
 import { thumbUrl } from "./api.js";
+import { prefixKey } from "./atlas-model.js";
 
 const SVG = "http://www.w3.org/2000/svg";
 const prefixName = prefix => prefix?.length ? `Group ${prefix.join(".")}` : "Root group";
@@ -24,6 +25,9 @@ export function renderMap(svg, placements, state, handlers = {}) {
   cancelMapInteractions(svg);
   const session = { clickTimer: null };
   renderSessions.set(svg, session);
+  if (Number.isFinite(handlers.width) && handlers.width > 0 && Number.isFinite(handlers.height) && handlers.height > 0) {
+    svg.setAttribute("viewBox", `0 0 ${handlers.width} ${handlers.height}`);
+  }
   svg.replaceChildren();
   const defs = svgEl("defs");
   svg.appendChild(defs);
@@ -31,6 +35,7 @@ export function renderMap(svg, placements, state, handlers = {}) {
   placements.forEach((node, index) => {
     const group = svgEl("g");
     group.classList.add("territory");
+    group.dataset.prefix = prefixKey(node.prefix);
     if (samePrefix(state.selected, node.prefix)) group.classList.add("selected");
     group.setAttribute("role", "treeitem");
     group.setAttribute("tabindex", String(index === (selectedIndex < 0 ? 0 : selectedIndex) ? 0 : -1));
