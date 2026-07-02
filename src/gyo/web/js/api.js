@@ -12,3 +12,11 @@ export async function fetchNodeItems(prefixKey) {
 }
 
 export const thumbUrl = (idx) => `/thumb/${idx}`;
+
+export async function fetchAtlas(prefix = "root", options) {
+  const response = await fetch(`/api/atlas/${encodeURIComponent(prefix)}`, options);
+  if (response.ok) return response.json();
+  let detail;
+  try { detail = (await response.json())?.detail; } catch { /* non-JSON response */ }
+  throw new Error(`${detail || response.statusText || "Atlas request failed"} (HTTP ${response.status})`);
+}

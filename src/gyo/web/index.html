@@ -1,30 +1,20 @@
 <!doctype html>
-<html lang="pt-br">
+<html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>gyo — RQ embedding inspector</title>
-<link rel="stylesheet" href="/style.css" />
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>gyo — Semantic Atlas</title><link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <header>
-    <div class="brand">gyo <small>vi</small></div>
-    <div class="crumbs" id="crumbs"></div>
-    <div class="stat">janela <b id="winstat">—</b></div>
-    <div class="stat">dead <b id="dead">—</b></div>
-    <div class="legend"><span>resíduo</span><div class="bar"></div><span>baixo→alto</span></div>
-    <span class="crumb" id="modeBtn" title="tecla C">modo: resíduo</span>
-  </header>
-
-  <div id="stage">
-    <div id="rail" title="profundidade — clique pra pular"></div>
-    <div id="icicle"><div id="scroller"></div></div>
-    <div class="fade fade-top"></div>
-    <div class="fade fade-bot"></div>
-  </div>
-
-  <div id="tip"></div>
-
+  <header class="topbar"><a class="brand" href="#">gyo <span>Semantic Atlas</span></a><nav id="breadcrumbs" aria-label="Atlas path"></nav><output id="projectionStatus"></output></header>
+  <main class="workspace">
+    <section class="map-panel" aria-label="Semantic map">
+      <div class="toolbar"><button id="backBtn" type="button">Back</button><button id="resetViewBtn" type="button">Reset view</button></div>
+      <div id="mapLoading" class="loading" hidden role="status"><span></span>Mapping territories…</div>
+      <svg id="atlas" role="tree" aria-label="Semantic territories" preserveAspectRatio="xMidYMid meet"></svg>
+      <div id="mapError" class="map-error" hidden role="alert"><p></p><button type="button">Retry</button></div>
+    </section>
+    <aside id="inspector" aria-live="polite" aria-label="Territory inspector"></aside>
+  </main>
+  <template id="sampleTemplate"><figure><div class="thumb-slot"></div><figcaption></figcaption></figure></template>
   <script type="module" src="/js/main.js"></script>
-</body>
-</html>
+</body></html>
