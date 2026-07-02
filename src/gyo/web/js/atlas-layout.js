@@ -65,7 +65,9 @@ function gridFallback(nodes, width, height, padding) {
   const rows = Math.ceil(nodes.length / columns);
   const cellWidth = usableWidth / columns;
   const cellHeight = usableHeight / rows;
-  const radius = Math.max(Number.EPSILON, Math.min(cellWidth, cellHeight) * 0.45);
+  const cellRadius = Math.max(Number.EPSILON, Math.min(cellWidth, cellHeight) * 0.48);
+  const maxOccupancy = Math.max(1, ...nodes.map(node => node.occupancy));
+  const minFactor = 0.45;
   const order = nodes.map((node, index) => ({ node, index })).sort((a, b) =>
     a.node.position[1] - b.node.position[1] ||
     a.node.position[0] - b.node.position[0] ||
@@ -78,7 +80,7 @@ function gridFallback(nodes, width, height, padding) {
       ...node,
       cx: padding + (column + 0.5) * cellWidth,
       cy: padding + (row + 0.5) * cellHeight,
-      r: radius,
+      r: cellRadius * (minFactor + (1 - minFactor) * Math.sqrt(node.occupancy / maxOccupancy)),
       layoutMode: "grid-fallback",
     };
   });

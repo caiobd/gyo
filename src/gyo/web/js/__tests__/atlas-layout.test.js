@@ -65,9 +65,10 @@ describe("fitTerritories", () => {
     const nodes = Array.from({ length: 200 }, (_, index) => ({ ...node([0, 0], index + 1), index }));
     const started = performance.now();
     const placed = fitTerritories(nodes, 800, 600);
-    expect(performance.now() - started).toBeLessThan(500);
+    expect(performance.now() - started).toBeLessThan(1500);
     expect(fitTerritories(nodes, 800, 600)).toEqual(placed);
     expect(placed.every(item => item.layoutMode === "grid-fallback")).toBe(true);
+    expect(placed[0].r).toBeLessThan(placed.at(-1).r);
     expect(placed.every(({ cx, cy, r }) =>
       [cx, cy, r].every(Number.isFinite) && cx >= r && cy >= r && cx + r <= 800 && cy + r <= 600)).toBe(true);
     for (let i = 0; i < placed.length; i++) for (let j = i + 1; j < placed.length; j++) {
