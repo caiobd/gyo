@@ -8,13 +8,13 @@
   <header class="topbar"><a class="brand" href="#">gyo <span>Semantic Atlas</span></a><nav id="breadcrumbs" aria-label="Atlas path"></nav><output id="projectionStatus"></output></header>
   <main class="workspace">
     <section class="map-panel" aria-label="Semantic map">
-      <div class="toolbar"><button id="backBtn" type="button">Back</button><button id="resetViewBtn" type="button">Reset view</button></div>
-      <div id="mapLoading" class="loading" hidden role="status"><span></span>Mapping territories…</div>
+      <div class="map-toolbar"><button id="backBtn" type="button">Back</button><button id="resetViewBtn" type="button">Reset view</button></div>
+      <div id="mapLoading" class="map-state loading" hidden role="status"><span></span>Mapping territories…</div>
       <svg id="atlas" role="tree" aria-label="Semantic territories" preserveAspectRatio="xMidYMid meet"></svg>
-      <div id="mapError" class="map-error" hidden role="alert"><p></p><button type="button">Retry</button></div>
+      <div id="mapError" class="map-state map-error" hidden role="alert"><p></p><button id="retryBtn" type="button">Retry</button></div>
     </section>
-    <aside id="inspector" aria-live="polite" aria-label="Territory inspector"></aside>
+    <aside id="inspector" class="inspector" aria-live="polite" aria-label="Territory inspector"><p class="inspector-empty">Select a territory to inspect it.</p></aside>
   </main>
-  <template id="sampleTemplate"><figure><div class="thumb-slot"></div><figcaption></figcaption></figure></template>
+  <template id="imageTemplate"><figure><div class="thumb-slot"></div><figcaption></figcaption></figure></template>
   <script type="module" src="/js/main.js"></script>
 </body></html>

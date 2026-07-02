@@ -71,4 +71,67 @@ describe("semantic atlas renderer", () => {
     expect(handlers.select).not.toHaveBeenCalled();
     vi.useRealTimers();
   });
+
+  it("keeps an SVG preview slot and offers a retry after image failure", () => {
+    const svg = document.createElementNS(SVG, "svg");
+    renderMap(svg, [{ ...node, cx: 100, cy: 90, r: 70 }], { selected: null }, {});
+    const image = svg.querySelector("image");
+    image.dispatchEvent(new Event("error"));
+    const retry = svg.querySelector('[role="button"]');
+    expect(retry?.textContent).toContain("Retry");
+    expect(image.getAttribute("visibility")).toBe("hidden");
+    retry.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(image.getAttribute("visibility")).toBe("visible");
+    expect(image.getAttribute("href")).toContain("/thumb/7");
+  });
+
+  it("uses roving tabindex and arrow, Home, and End navigation", () => {
+    const svg = document.createElementNS(SVG, "svg");
+    document.body.appendChild(svg);
+    const nodes = [0, 1, 2].map((value, index) => ({ ...node, prefix: [value], cx: 60 + index * 100, cy: 90, r: 40 }));
+    renderMap(svg, nodes, { selected: [1] }, {});
+    const territories = [...svg.querySelectorAll('[role="treeitem"]')];
+    expect(territories.map(item => item.tabIndex)).toEqual([-1, 0, -1]);
+    territories[1].focus();
+    territories[1].dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true }));
+    expect(document.activeElement).toBe(territories[2]);
+    territories[2].dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }));
+    expect(document.activeElement).toBe(territories[0]);
+    territories[0].dispatchEvent(new KeyboardEvent("keydown", { key: "End", bubbles: true }));
+    expect(document.activeElement).toBe(territories[2]);
+    svg.remove();
+  });
+
+  it("cancels pending selection when the map rerenders", () => {
+    vi.useFakeTimers();
+    const svg = document.createElementNS(SVG, "svg");
+    const select = vi.fn();
+    renderMap(svg, [{ ...node, cx: 100, cy: 90, r: 70 }], { selected: null }, { select });
+    svg.querySelector('[role="treeitem"]').dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    renderMap(svg, [], { selected: null }, { select });
+    vi.runAllTimers();
+    expect(select).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("lets a leaf double click resolve to one selection", () => {
+    vi.useFakeTimers();
+    const svg = document.createElementNS(SVG, "svg");
+    const handlers = { select: vi.fn(), enter: vi.fn() };
+    renderMap(svg, [{ ...node, has_children: false, cx: 100, cy: 90, r: 70 }], { selected: null }, handlers);
+    const territory = svg.querySelector('[role="treeitem"]');
+    territory.dispatchEvent(new MouseEvent("click", { bubbles: true })); territory.dispatchEvent(new MouseEvent("click", { bubbles: true })); territory.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    vi.runAllTimers();
+    expect(handlers.select).toHaveBeenCalledOnce();
+    expect(handlers.enter).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("uses ordinary pressed mode buttons", () => {
+    const container = document.createElement("aside");
+    renderInspector(container, node, "outliers", {});
+    const buttons = [...container.querySelectorAll(".tabs button")];
+    expect(buttons.map(button => button.getAttribute("aria-pressed"))).toEqual(["false", "true", "false"]);
+    expect(container.querySelector('[role="tab"]')).toBeNull();
+  });
 });
