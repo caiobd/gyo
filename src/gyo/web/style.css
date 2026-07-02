@@ -281,9 +281,10 @@ button:hover {
   }
   .workspace {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(350px, 58fr) minmax(0, 42fr);
+    grid-template-rows: minmax(160px, 58%) minmax(0, 42%);
   }
   .map-panel {
+    min-height: 0;
     border-right: 0;
     border-bottom: 1px solid var(--line);
   }

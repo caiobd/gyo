@@ -274,7 +274,7 @@ async def flow_zoom_pan_reset(page: Page, base: str) -> None:
 
 
 async def flow_responsive(page: Page, base: str) -> None:
-    await page.set_viewport_size({"width": 760, "height": 900})
+    await page.set_viewport_size({"width": 768, "height": 1024})
     await boot(page, base)
     await page.wait_for_function("getComputedStyle(document.querySelector('.workspace')).gridTemplateColumns.split(' ').length === 1")
     mobile_columns = await page.locator(".workspace").evaluate("e => getComputedStyle(e).gridTemplateColumns")
@@ -289,6 +289,12 @@ async def flow_responsive(page: Page, base: str) -> None:
     assert await page.locator("#inspector").evaluate("element => element.scrollTop > 0")
     assert await page.locator(".map-panel").evaluate("element => element.getBoundingClientRect().top") == map_top
     assert await page.evaluate("document.documentElement.scrollHeight <= window.innerHeight + 2")
+    await page.set_viewport_size({"width": 760, "height": 400})
+    await page.wait_for_function("document.querySelector('#inspector').getBoundingClientRect().bottom <= innerHeight + 2")
+    for selector in ("#atlas", "#inspector", "#resetViewBtn", "#backBtn"):
+        assert await page.locator(selector).evaluate("element => { const r = element.getBoundingClientRect(); return r.width > 0 && r.height > 0 && r.right > 0 && r.bottom > 0 && r.left < innerWidth && r.top < innerHeight; }")
+    assert await page.evaluate("document.documentElement.scrollHeight <= window.innerHeight + 2")
+    assert await page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 2")
     await page.set_viewport_size({"width": 1440, "height": 900})
     await page.wait_for_function("getComputedStyle(document.querySelector('.workspace')).gridTemplateColumns.split(' ').length === 2")
     desktop_columns = await page.locator(".workspace").evaluate("e => getComputedStyle(e).gridTemplateColumns")
@@ -310,6 +316,105 @@ async def flow_thumbnail_http(page: Page, base: str) -> None:
         assert len(await response.body()) > 50
 
 
+async def flow_accessibility_audit(page: Page, base: str) -> None:
+    await page.emulate_media(reduced_motion="reduce")
+
+    async def force_warning(route):
+        response = await route.fetch()
+        payload = await response.json()
+        payload["projection"] = {"stress": 0.777, "warning": True}
+        await route.fulfill(response=response, json=payload)
+
+    async def fail_thumbnail(route):
+        await route.fulfill(status=200, content_type="image/png", body=b"not a png")
+
+    await page.route("**/api/atlas/root", force_warning)
+    await page.route("**/thumb/*", fail_thumbnail)
+    await boot(page, base)
+    try:
+        warning = page.locator("#projectionStatus")
+        assert "projection warning" in await warning.inner_text()
+        assert await warning.evaluate("element => { const r = element.getBoundingClientRect(); return r.width > 0 && r.bottom > 0 && r.top < innerHeight; }")
+
+        motion = await page.evaluate("""() => ['.territory', '.loading span', 'button'].map(selector => {
+            const element = document.querySelector(selector); const style = getComputedStyle(element);
+            const seconds = value => Math.max(...value.split(',').map(part => parseFloat(part) * (part.includes('ms') ? .001 : 1)));
+            return [selector, seconds(style.transitionDuration), seconds(style.animationDuration)];
+        })""")
+        assert all(transition <= 0.001 and animation <= 0.001 for _, transition, animation in motion), motion
+        assert await page.evaluate("""() => { const ids = [...document.querySelectorAll('[id]')].map(element => element.id); return new Set(ids).size === ids.length; }""")
+
+        first = page.locator('#atlas [role="treeitem"]').first
+        await first.focus()
+        first_prefix = await first.get_attribute("data-prefix")
+        await page.keyboard.press("ArrowRight")
+        target_prefix = await page.evaluate("document.activeElement.dataset.prefix")
+        assert target_prefix and target_prefix != first_prefix
+        await page.keyboard.press("Enter")
+        await page.wait_for_function("prefix => document.querySelector(`[data-prefix=\"${prefix}\"]`)?.getAttribute('aria-selected') === 'true'", arg=target_prefix)
+
+        inspector_retry = page.locator("#inspector .thumb-slot button", has_text="Retry").first
+        preview_retry = page.locator("#atlas .svg-image-retry").first
+        await inspector_retry.wait_for(timeout=TIMEOUT)
+        await preview_retry.wait_for(timeout=TIMEOUT)
+        inspector_box = await page.locator("#inspector .thumb-slot").first.bounding_box()
+        preview_box = await preview_retry.bounding_box()
+        assert inspector_box and inspector_box["width"] > 80 and inspector_box["height"] > 80
+        assert preview_box and preview_box["width"] > 20 and preview_box["height"] > 20
+
+        await page.unroute("**/thumb/*", fail_thumbnail)
+        preview_handle = await preview_retry.element_handle()
+        await preview_retry.focus()
+        async with page.expect_response(lambda response: "/thumb/" in response.url and response.status == 200):
+            await page.keyboard.press("Enter")
+        await page.wait_for_function("element => !element.isConnected", arg=preview_handle, timeout=TIMEOUT)
+        assert await page.locator('#atlas image[visibility="visible"]').count() > 0
+        await inspector_retry.focus()
+        async with page.expect_response(lambda response: "/thumb/" in response.url and response.status == 200):
+            await page.keyboard.press("Space")
+        inspector_image = page.locator("#inspector .sample-grid img").first
+        await page.wait_for_function("""() => { const image = document.querySelector('#inspector .sample-grid img'); return image?.complete && image.naturalWidth > 0; }""")
+        image_box = await inspector_image.bounding_box()
+        assert image_box and image_box["width"] > 80 and image_box["height"] > 80
+
+        outliers = page.get_by_role("button", name="Outliers", exact=True)
+        await outliers.focus()
+        await page.keyboard.press("Enter")
+        assert await outliers.get_attribute("aria-pressed") == "true"
+        representatives = page.get_by_role("button", name="Representative", exact=True)
+        await representatives.focus()
+        await page.keyboard.press("Space")
+        assert await representatives.get_attribute("aria-pressed") == "true"
+
+        enter = page.get_by_role("button", name="Enter group", exact=True)
+        await enter.focus()
+        await page.keyboard.press("Space")
+        await page.wait_for_function("document.querySelector('#breadcrumbs [aria-current=page]')?.textContent !== 'Root'")
+        root_crumb = page.get_by_role("button", name="Root", exact=True)
+        await root_crumb.focus()
+        await page.keyboard.press("Enter")
+        await page.wait_for_function("document.querySelector('#breadcrumbs [aria-current=page]')?.textContent === 'Root'")
+
+        territory = page.locator('#atlas .territory[data-prefix="2"]')
+        await territory.focus()
+        await page.keyboard.press("Enter")
+        await page.get_by_role("button", name="Enter group", exact=True).focus()
+        await page.keyboard.press("Enter")
+        await page.wait_for_function("document.querySelector('#breadcrumbs [aria-current=page]')?.textContent === '2'")
+        await page.locator("#backBtn").focus()
+        await page.keyboard.press("Space")
+        await page.wait_for_function("document.querySelector('#breadcrumbs [aria-current=page]')?.textContent === 'Root'")
+
+        await page.set_viewport_size({"width": 720, "height": 450})
+        await page.wait_for_function("document.querySelector('#inspector').getBoundingClientRect().bottom <= innerHeight + 2")
+        assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth + 2 && document.documentElement.scrollHeight <= innerHeight + 2")
+        assert await page.locator("#inspector").evaluate("element => { const r = element.getBoundingClientRect(); return r.width > 0 && r.height > 0 && r.top < innerHeight && r.bottom > 0; }")
+        assert await page.evaluate("""() => { const controls = [...document.querySelectorAll('.map-toolbar button')]; return controls.every((a, i) => controls.slice(i + 1).every(b => { const x = a.getBoundingClientRect(), y = b.getBoundingClientRect(); return x.right <= y.left || y.right <= x.left || x.bottom <= y.top || y.bottom <= x.top; })); }""")
+    finally:
+        await page.unroute("**/api/atlas/root", force_warning)
+        await page.unroute("**/thumb/*", fail_thumbnail)
+
+
 FLOWS = [
     ("boot", flow_boot),
     ("selection and representative samples", flow_selection_and_samples),
@@ -319,6 +424,7 @@ FLOWS = [
     ("wheel zoom, drag pan, and reset", flow_zoom_pan_reset),
     ("responsive layout", flow_responsive),
     ("thumbnail HTTP responses", flow_thumbnail_http),
+    ("accessibility audit", flow_accessibility_audit),
 ]
 
 
