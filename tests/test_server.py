@@ -7,6 +7,7 @@ import pytest
 from PIL import Image
 from fastapi.testclient import TestClient
 from gyo.api.server import create_app
+from gyo.api.server import _level_columns, _validated_final_residual
 
 
 def _seed_run(data_dir):
@@ -163,6 +164,67 @@ def test_atlas_missing_inputs_are_conflicts(tmp_path):
     response = TestClient(create_app(str(tmp_path))).get("/api/atlas/root")
     assert response.status_code == 409
     assert "level_1.npy" in response.json()["detail"]
+
+
+def test_level_columns_are_numeric_and_contiguous():
+    columns = [f"c_{level}" for level in range(11)]
+    assert _level_columns(reversed(columns)) == columns
+    with pytest.raises(ValueError, match="contiguous"):
+        _level_columns(["c_0", "c_2"])
+
+
+def test_final_residual_validation_rejects_shape_count_and_nonfinite():
+    for values, rows in [([[1.0], [2.0]], 2), ([1.0], 2), ([1.0, np.nan], 2)]:
+        with pytest.raises(ValueError, match="final_residual"):
+            _validated_final_residual(values, rows)
+
+
+def test_atlas_rejects_fractional_codes(tmp_path):
+    _seed_run(tmp_path)
+    codes = pd.read_parquet(tmp_path / "codes.parquet")
+    codes["c_0"] = codes["c_0"].astype(float)
+    codes.loc[0, "c_0"] = 0.5
+    codes.to_parquet(tmp_path / "codes.parquet", index=False)
+
+    response = TestClient(create_app(str(tmp_path))).get("/api/atlas/root")
+    assert response.status_code == 409
+    assert "integral" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    "mutation, detail",
+    [
+        ("malformed-config", "config"),
+        ("missing-config-key", "config"),
+        ("corrupt-embedding", "embeddings.npy"),
+        ("corrupt-codebook", "level_0.npy"),
+        ("codebook-shape", "2D"),
+        ("codebook-nonfinite", "finite"),
+    ],
+)
+def test_atlas_reports_malformed_serialized_inputs_as_conflicts(
+    tmp_path, mutation, detail
+):
+    _seed_run(tmp_path)
+    config_path = tmp_path / "codebooks" / "v1" / "config.json"
+    if mutation == "malformed-config":
+        config_path.write_text("{")
+    elif mutation == "missing-config-key":
+        config_path.write_text(json.dumps({"num_levels": 2}))
+    elif mutation == "corrupt-embedding":
+        (tmp_path / "embeddings.npy").write_bytes(b"not-npy")
+    elif mutation == "corrupt-codebook":
+        (config_path.parent / "level_0.npy").write_bytes(b"not-npy")
+    elif mutation == "codebook-shape":
+        np.save(config_path.parent / "level_0.npy", np.zeros(2))
+    else:
+        codebook = np.load(config_path.parent / "level_0.npy")
+        codebook[0, 0] = np.inf
+        np.save(config_path.parent / "level_0.npy", codebook)
+
+    response = TestClient(create_app(str(tmp_path))).get("/api/atlas/root")
+    assert response.status_code == 409
+    assert detail in response.json()["detail"]
 
 
 def test_atlas_joins_metadata_by_item_id(tmp_path):

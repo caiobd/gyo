@@ -1,6 +1,7 @@
 from pathlib import Path
 import json
 import mimetypes
+import re
 
 import numpy as np
 from fastapi import FastAPI, HTTPException
@@ -22,6 +23,55 @@ from gyo.tree.signals import node_stats, dead_codeword_counts
 WEB = Path(__file__).resolve().parent.parent / "web"
 
 
+def _level_columns(columns):
+    levels = []
+    for column in columns:
+        match = re.fullmatch(r"c_(\d+)", str(column))
+        if match:
+            levels.append((int(match.group(1)), column))
+    levels.sort()
+    if [level for level, _ in levels] != list(range(len(levels))):
+        raise ValueError("Atlas level columns must be contiguous from c_0")
+    return [column for _, column in levels]
+
+
+def _validated_codes(values):
+    raw = np.asarray(values)
+    if raw.ndim != 2 or not np.issubdtype(raw.dtype, np.number):
+        raise ValueError("Atlas codes must be a numeric 2D array")
+    if not np.isfinite(raw).all():
+        raise ValueError("Atlas codes must be finite")
+    if not np.equal(raw, np.floor(raw)).all():
+        raise ValueError("Atlas codes must contain integral values")
+    bounds = np.iinfo(np.int64)
+    if np.any(raw < bounds.min) or np.any(raw > bounds.max):
+        raise ValueError("Atlas codes must fit in int64")
+    return raw.astype(np.int64)
+
+
+def _validated_final_residual(values, num_rows):
+    raw = np.asarray(values)
+    if (
+        raw.ndim != 1
+        or raw.shape[0] != num_rows
+        or not np.issubdtype(raw.dtype, np.number)
+    ):
+        raise ValueError("Atlas final_residual must be numeric, 1D, and match codes rows")
+    if not np.isfinite(raw).all():
+        raise ValueError("Atlas final_residual must be finite")
+    result = raw.astype(np.float32)
+    if not np.isfinite(result).all():
+        raise ValueError("Atlas final_residual must be finite float32 values")
+    return result
+
+
+def _config_int(config, key):
+    value = config.get(key)
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"Atlas config {key} must be a positive integer")
+    return value
+
+
 def create_app(data_dir: str) -> FastAPI:
     data_dir = Path(data_dir)
     app = FastAPI(title="gyo")
@@ -35,9 +85,15 @@ def create_app(data_dir: str) -> FastAPI:
             return data_cache
         codes_df = load_table(data_dir / "codes.parquet")
         meta_df = load_table(data_dir / "meta.parquet")
-        level_cols = [c for c in codes_df.columns if c.startswith("c_")]
-        codes = codes_df[sorted(level_cols)].to_numpy(np.int64)
-        final_res = codes_df["final_residual"].to_numpy(np.float32)
+        level_cols = _level_columns(codes_df.columns)
+        if not level_cols:
+            raise ValueError("Atlas codes require contiguous level columns from c_0")
+        codes = _validated_codes(codes_df[level_cols].to_numpy())
+        if "final_residual" not in codes_df:
+            raise ValueError("Atlas final_residual column is required")
+        final_res = _validated_final_residual(
+            codes_df["final_residual"].to_numpy(), len(codes)
+        )
         item_ids = (
             [int(value) for value in codes_df["idx"]]
             if "idx" in codes_df
@@ -72,7 +128,12 @@ def create_app(data_dir: str) -> FastAPI:
         if atlas_cache is not None:
             return atlas_cache
 
-        codes, final_res, labels, _ = _load()
+        try:
+            codes, final_res, labels, _ = _load()
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(409, f"invalid Atlas table input: {exc}") from exc
         embeddings_path = data_dir / "embeddings.npy"
         config_path = data_dir / "codebooks" / "v1" / "config.json"
         if not embeddings_path.exists():
@@ -80,17 +141,49 @@ def create_app(data_dir: str) -> FastAPI:
         if not config_path.exists():
             raise HTTPException(409, "required Atlas input missing: codebooks/v1/config.json")
 
-        config = json.loads(config_path.read_text())
-        num_levels = int(config.get("num_levels", codes.shape[1]))
+        try:
+            config = json.loads(config_path.read_text())
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise HTTPException(409, f"invalid Atlas config: {exc}") from exc
+        if not isinstance(config, dict):
+            raise HTTPException(409, "invalid Atlas config: expected a JSON object")
+        try:
+            num_levels = _config_int(config, "num_levels")
+            codebook_size = _config_int(config, "codebook_size")
+            dim = _config_int(config, "dim")
+        except ValueError as exc:
+            raise HTTPException(409, f"invalid Atlas config: {exc}") from exc
         for level in range(num_levels):
             path = config_path.parent / f"level_{level}.npy"
             if not path.exists():
                 raise HTTPException(409, f"required Atlas input missing: {path.name}")
-        rq = ResidualQuantizer.load(config_path.parent)
-        embeddings = np.load(embeddings_path)
+        rq = ResidualQuantizer(
+            num_levels=num_levels,
+            codebook_size=codebook_size,
+            dim=dim,
+            proj_dim=config.get("proj_dim"),
+            seed=config.get("seed", 0),
+        )
+        rq.codebooks = []
+        for level in range(num_levels):
+            path = config_path.parent / f"level_{level}.npy"
+            try:
+                rq.codebooks.append(np.load(path, allow_pickle=False))
+            except (OSError, ValueError) as exc:
+                raise HTTPException(409, f"invalid Atlas input {path.name}: {exc}") from exc
+        try:
+            embeddings = np.load(embeddings_path, allow_pickle=False)
+        except (OSError, ValueError) as exc:
+            raise HTTPException(
+                409, f"invalid Atlas input embeddings.npy: {exc}"
+            ) from exc
         item_ids, meta_ids, meta_by_id = identity_cache
 
-        if codes.ndim != 2 or embeddings.ndim != 2:
+        if (
+            codes.ndim != 2
+            or embeddings.ndim != 2
+            or not np.issubdtype(embeddings.dtype, np.number)
+        ):
             raise HTTPException(409, "Atlas codes and embeddings must be 2D")
         if codes.shape[0] != embeddings.shape[0]:
             raise HTTPException(409, "Atlas codes and embeddings rows must match")
@@ -107,7 +200,7 @@ def create_app(data_dir: str) -> FastAPI:
             missing = ", ".join(str(item_id) for item_id in missing_ids[:20])
             raise HTTPException(409, f"metadata missing for item ids: {missing}")
         for level, codebook in enumerate(rq.codebooks):
-            if codebook.ndim != 2:
+            if codebook.ndim != 2 or not np.issubdtype(codebook.dtype, np.number):
                 raise HTTPException(409, f"Atlas codebook level {level} must be 2D")
             if not np.isfinite(codebook).all():
                 raise HTTPException(409, f"Atlas codebook level {level} must be finite")
