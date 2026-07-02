@@ -1,7 +1,9 @@
 import json
+from io import BytesIO
 
 import numpy as np
 import pandas as pd
+import pytest
 from PIL import Image
 from fastapi.testclient import TestClient
 from gyo.api.server import create_app
@@ -175,8 +177,13 @@ def test_atlas_joins_metadata_by_item_id(tmp_path):
             "label": ["thirty", "ten", "twenty"],
         }
     ).to_parquet(tmp_path / "meta.parquet", index=False)
+    for item_id in (10, 20, 30):
+        Image.new("L", (2, 2), color=item_id).save(
+            tmp_path / "images" / f"id-{item_id}.png"
+        )
 
-    response = TestClient(create_app(str(tmp_path))).get("/api/atlas/root")
+    client = TestClient(create_app(str(tmp_path)))
+    response = client.get("/api/atlas/root")
     assert response.status_code == 200
     items = response.json()["focus"]["samples"]["representative"]
     assert {(item["idx"], item["path"], item["label"]) for item in items} == {
@@ -184,6 +191,15 @@ def test_atlas_joins_metadata_by_item_id(tmp_path):
         (20, "id-20.png", "twenty"),
         (30, "id-30.png", "thirty"),
     }
+    node_items = client.get("/api/node/0").json()["items"]
+    assert {(item["idx"], item["path"]) for item in node_items} == {
+        (10, "id-10.png"),
+        (20, "id-20.png"),
+    }
+    for item in items:
+        thumb = client.get(f"/thumb/{item['idx']}")
+        assert thumb.status_code == 200
+        assert Image.open(BytesIO(thumb.content)).getpixel((0, 0)) == item["idx"]
 
 
 def test_atlas_rejects_codes_without_metadata(tmp_path):
@@ -195,3 +211,88 @@ def test_atlas_rejects_codes_without_metadata(tmp_path):
     assert response.status_code == 409
     assert "metadata" in response.json()["detail"]
     assert "2" in response.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    "mutation, detail",
+    [
+        ("row-mismatch", "rows"),
+        ("dim-mismatch", "dimension"),
+        ("invalid-code", "code index"),
+        ("nonfinite", "finite"),
+        ("duplicate-code-id", "duplicate codes"),
+        ("duplicate-meta-id", "duplicate metadata"),
+    ],
+)
+def test_atlas_validates_run_inputs(tmp_path, mutation, detail):
+    _seed_run(tmp_path)
+    if mutation == "row-mismatch":
+        np.save(tmp_path / "embeddings.npy", np.zeros((2, 2), dtype=np.float32))
+    elif mutation == "dim-mismatch":
+        np.save(tmp_path / "embeddings.npy", np.zeros((3, 3), dtype=np.float32))
+    elif mutation == "invalid-code":
+        codes = pd.read_parquet(tmp_path / "codes.parquet")
+        codes.loc[0, "c_0"] = 2
+        codes.to_parquet(tmp_path / "codes.parquet", index=False)
+    elif mutation == "nonfinite":
+        embeddings = np.load(tmp_path / "embeddings.npy")
+        embeddings[0, 0] = np.nan
+        np.save(tmp_path / "embeddings.npy", embeddings)
+    elif mutation == "duplicate-code-id":
+        codes = pd.read_parquet(tmp_path / "codes.parquet")
+        codes["idx"] = [0, 0, 2]
+        codes.to_parquet(tmp_path / "codes.parquet", index=False)
+    else:
+        meta = pd.read_parquet(tmp_path / "meta.parquet")
+        meta["idx"] = [0, 0, 2]
+        meta.to_parquet(tmp_path / "meta.parquet", index=False)
+
+    response = TestClient(create_app(str(tmp_path))).get("/api/atlas/root")
+    assert response.status_code == 409
+    assert detail in response.json()["detail"]
+
+
+def test_atlas_caches_stats_and_rankings(tmp_path, monkeypatch):
+    _seed_run(tmp_path)
+    import gyo.api.server as server
+
+    counts = {"stats": 0, "ranked": 0}
+    real_stats = server.node_stats
+    real_ranked = server.ranked_samples
+
+    def counting_stats(*args, **kwargs):
+        counts["stats"] += 1
+        return real_stats(*args, **kwargs)
+
+    def counting_ranked(*args, **kwargs):
+        counts["ranked"] += 1
+        return real_ranked(*args, **kwargs)
+
+    monkeypatch.setattr(server, "node_stats", counting_stats)
+    monkeypatch.setattr(server, "ranked_samples", counting_ranked)
+    client = TestClient(server.create_app(str(tmp_path)))
+    client.get("/api/atlas/root")
+    first = counts.copy()
+    client.get("/api/atlas/root")
+    assert counts == first
+    assert counts["stats"] == 1
+
+
+def test_atlas_purity_ignores_missing_labels(tmp_path):
+    _seed_run(tmp_path)
+    meta = pd.read_parquet(tmp_path / "meta.parquet")
+    meta["label"] = [None, None, "B"]
+    meta.to_parquet(tmp_path / "meta.parquet", index=False)
+    client = TestClient(create_app(str(tmp_path)))
+
+    assert client.get("/api/atlas/0").json()["focus"]["purity"] is None
+    assert client.get("/api/atlas/root").json()["focus"]["purity"] == 1.0
+
+
+def test_thumb_rejects_metadata_path_traversal(tmp_path):
+    _seed_run(tmp_path)
+    meta = pd.read_parquet(tmp_path / "meta.parquet")
+    meta.loc[0, "path"] = "../codes.parquet"
+    meta.to_parquet(tmp_path / "meta.parquet", index=False)
+
+    assert TestClient(create_app(str(tmp_path))).get("/thumb/0").status_code == 404
