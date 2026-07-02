@@ -112,10 +112,12 @@ export function startAtlas(doc = document, win = window) {
     const point = { x: view.x + (event.clientX - rect.left) / rect.width * view.width, y: view.y + (event.clientY - rect.top) / rect.height * view.height };
     view = zoomView(view, event.deltaY < 0 ? 1.15 : 1 / 1.15, point, baseView); applyView();
   }, { passive: false });
-  on(svg, "pointerdown", event => { if (event.button != null && event.button !== 0) return; drag = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, view: { ...view }, moved: false }; svg.setPointerCapture?.(event.pointerId); });
+  on(svg, "pointerdown", event => { if (event.button != null && event.button !== 0) return; drag = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, view: { ...view }, moved: false }; });
   on(svg, "pointermove", event => {
     if (!drag || event.pointerId !== drag.pointerId || !view) return;
-    const dx = event.clientX - drag.x, dy = event.clientY - drag.y; if (Math.hypot(dx, dy) < 5 && !drag.moved) return; drag.moved = true;
+    const dx = event.clientX - drag.x, dy = event.clientY - drag.y; if (Math.hypot(dx, dy) < 5 && !drag.moved) return;
+    if (!drag.moved) svg.setPointerCapture?.(event.pointerId);
+    drag.moved = true;
     const rect = svg.getBoundingClientRect(); view = { ...view, x: drag.view.x - dx / rect.width * drag.view.width, y: drag.view.y - dy / rect.height * drag.view.height }; applyView();
   });
   on(svg, "pointerup", event => endDrag(event, true));

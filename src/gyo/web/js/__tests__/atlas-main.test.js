@@ -77,6 +77,18 @@ describe("atlas orchestration", () => {
     app.destroy(); vi.useRealTimers();
   });
 
+  it("does not capture a tap before it becomes a drag", async () => {
+    const svg = shell();
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true, json: async () => payload([], [child]) });
+    vi.useFakeTimers(); const app = startAtlas(); await vi.runAllTimersAsync();
+    const pointer = (type, values) => { const event = new Event(type, { bubbles: true }); Object.assign(event, values); return event; };
+    svg.dispatchEvent(pointer("pointerdown", { pointerId: 8, clientX: 10, clientY: 10, button: 0 }));
+    expect(svg.setPointerCapture).not.toHaveBeenCalled();
+    svg.dispatchEvent(pointer("pointermove", { pointerId: 8, clientX: 30, clientY: 30 }));
+    expect(svg.setPointerCapture).toHaveBeenCalledWith(8);
+    app.destroy(); vi.useRealTimers();
+  });
+
   it("destroy aborts work and removes interaction listeners", async () => {
     const svg = shell(); let signal;
     vi.spyOn(globalThis, "fetch").mockImplementation((_url, options) => { signal = options.signal; return new Promise(() => {}); });

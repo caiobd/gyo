@@ -85,8 +85,17 @@ def free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def wait_until_ready(base: str, process: multiprocessing.Process) -> None:
-    deadline = time.monotonic() + 15
+def stop_server(process: multiprocessing.Process) -> None:
+    if process.is_alive():
+        process.terminate()
+    process.join(timeout=5)
+    if process.is_alive():
+        process.kill()
+        process.join(timeout=2)
+
+
+def wait_until_ready(base: str, process: multiprocessing.Process, timeout: float = 8) -> None:
+    deadline = time.monotonic() + timeout
     last_error: Exception | None = None
     while time.monotonic() < deadline:
         if not process.is_alive():
@@ -99,6 +108,27 @@ def wait_until_ready(base: str, process: multiprocessing.Process) -> None:
             last_error = exc
         time.sleep(.05)
     raise RuntimeError(f"Atlas server did not become ready: {last_error}")
+
+
+def start_server(run_dir: Path, attempts: int = 4) -> tuple[multiprocessing.Process, str]:
+    """Start on a dynamically allocated port, retrying the unavoidable bind race."""
+    diagnostics: list[str] = []
+    context = multiprocessing.get_context("spawn")
+    for attempt in range(1, attempts + 1):
+        port = free_port()
+        base = f"http://127.0.0.1:{port}"
+        process = context.Process(target=serve, args=(str(run_dir), port), daemon=True)
+        process.start()
+        try:
+            wait_until_ready(base, process)
+            return process, base
+        except Exception as exc:
+            diagnostics.append(
+                f"attempt {attempt}/{attempts} on port {port}: {type(exc).__name__}: {exc} "
+                f"(exit={process.exitcode})"
+            )
+            stop_server(process)
+    raise RuntimeError("Atlas server startup failed:\n" + "\n".join(diagnostics))
 
 
 async def boot(page: Page, base: str) -> None:
@@ -117,10 +147,22 @@ async def flow_boot(page: Page, base: str) -> None:
 
 async def select_internal(page: Page):
     territory = page.locator('#atlas .territory[data-prefix="2"]')
-    # Dispatch on the semantic treeitem itself. SVG child images may own the
-    # hit-test point, while the user-facing interaction contract belongs to g.
-    await territory.dispatch_event("click")
+    circle = territory.locator("circle")
+    await circle.wait_for(state="visible", timeout=TIMEOUT)
+    box = await circle.bounding_box()
+    assert box and box["width"] > 4 and box["height"] > 4, "internal territory has no hittable circle"
+    # Use the same physical pointer path as a user; synthetic dispatch would
+    # hide pointer-capture and hit-testing regressions.
+    x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+    hit = await page.evaluate("([x, y]) => { const e = document.elementFromPoint(x, y); return {tag: e?.tagName, prefix: e?.closest?.('.territory')?.dataset.prefix}; }", [x, y])
+    assert hit.get("prefix") == "2", f"territory center hit-test mismatch: box={box}, hit={hit}"
+    await page.mouse.click(x, y)
+    await page.wait_for_function(
+        "document.querySelector('[data-prefix=\"2\"]')?.getAttribute('aria-selected') === 'true'",
+        timeout=TIMEOUT,
+    )
     await page.locator("#inspector .metrics").wait_for(timeout=TIMEOUT)
+    assert "Group 2" in await page.locator("#inspector h2").inner_text()
     return territory
 
 
@@ -138,9 +180,20 @@ async def flow_selection_and_samples(page: Page, base: str) -> None:
 async def flow_outliers_and_keyboard(page: Page, base: str) -> None:
     await boot(page, base)
     await select_internal(page)
+    representative = page.locator("#inspector .sample-grid img").first
+    await representative.wait_for(state="visible", timeout=TIMEOUT)
+    representative_src = await representative.get_attribute("src")
     outliers = page.get_by_role("button", name="Outliers", exact=True)
     await outliers.click()
     assert await outliers.get_attribute("aria-pressed") == "true"
+    outlier = page.locator("#inspector .sample-grid img").first
+    await page.wait_for_function(
+        "previous => document.querySelector('#inspector .sample-grid img')?.getAttribute('src') !== previous",
+        arg=representative_src,
+        timeout=TIMEOUT,
+    )
+    assert await outlier.get_attribute("src") != representative_src
+    assert await outlier.evaluate("image => image.complete && image.naturalWidth > 0")
     target = page.locator('#atlas .territory[data-prefix="5"]')
     await target.focus()
     await target.press("Enter")
@@ -155,13 +208,20 @@ async def flow_enter_and_breadcrumbs(page: Page, base: str) -> None:
     crumbs = page.locator("#breadcrumbs button")
     await crumbs.nth(1).wait_for()
     assert await crumbs.count() == 2
+    assert await crumbs.nth(1).inner_text() == "2"
+    assert await crumbs.nth(1).get_attribute("aria-current") == "page"
+    assert all(prefix.startswith("2,") for prefix in await page.locator("#atlas .territory").evaluate_all("nodes => nodes.map(n => n.dataset.prefix)"))
     assert await page.locator("#atlas .territory").count() >= 2
     await page.get_by_role("button", name="Root", exact=True).click()
-    await page.wait_for_function("document.querySelectorAll('#breadcrumbs button').length === 1")
+    await page.wait_for_function("document.querySelector('#breadcrumbs [aria-current=page]')?.textContent === 'Root'")
+    assert "Root" in await page.locator("#breadcrumbs [aria-current=page]").inner_text()
     await select_internal(page)
     await page.get_by_role("button", name="Enter group", exact=True).click()
+    await page.wait_for_function("document.querySelector('#breadcrumbs [aria-current=page]')?.textContent === '2'")
     await page.locator("#backBtn:not([disabled])").click()
-    await page.wait_for_function("document.querySelectorAll('#breadcrumbs button').length === 1")
+    await page.wait_for_function("document.querySelector('#breadcrumbs [aria-current=page]')?.textContent === 'Root'")
+    root_prefixes = await page.locator("#atlas .territory").evaluate_all("nodes => nodes.map(n => n.dataset.prefix)")
+    assert "2" in root_prefixes and all("," not in prefix for prefix in root_prefixes)
 
 
 async def flow_parent_comparison(page: Page, base: str) -> None:
@@ -172,7 +232,10 @@ async def flow_parent_comparison(page: Page, base: str) -> None:
     assert "Current focus" in await comparison.inner_text()
     assert "Selected group" in await comparison.inner_text()
     assert await comparison.locator("section").count() == 2
-    assert await comparison.locator("section img").count() >= 2
+    for section in await comparison.locator("section").all():
+        images = section.locator("img")
+        assert await images.count() > 0
+        assert await images.first.evaluate("image => image.complete && image.naturalWidth > 0")
 
 
 def parse_viewbox(value: str) -> tuple[float, float, float, float]:
@@ -213,14 +276,21 @@ async def flow_zoom_pan_reset(page: Page, base: str) -> None:
 async def flow_responsive(page: Page, base: str) -> None:
     await page.set_viewport_size({"width": 760, "height": 900})
     await boot(page, base)
+    await page.wait_for_function("getComputedStyle(document.querySelector('.workspace')).gridTemplateColumns.split(' ').length === 1")
     mobile_columns = await page.locator(".workspace").evaluate("e => getComputedStyle(e).gridTemplateColumns")
     assert len(mobile_columns.split()) == 1
     assert await page.locator("#atlas .territory").count() > 0
+    assert await page.locator("#atlas").is_visible() and await page.locator("#inspector").is_visible()
+    assert await page.locator("#resetViewBtn").is_visible() and await page.locator("#backBtn").is_visible()
+    assert await page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 2")
     await page.set_viewport_size({"width": 1440, "height": 900})
-    await page.wait_for_timeout(150)
+    await page.wait_for_function("getComputedStyle(document.querySelector('.workspace')).gridTemplateColumns.split(' ').length === 2")
     desktop_columns = await page.locator(".workspace").evaluate("e => getComputedStyle(e).gridTemplateColumns")
     assert len(desktop_columns.split()) == 2
     assert await page.locator("#atlas .territory").count() > 0
+    assert await page.locator("#atlas").is_visible() and await page.locator("#inspector").is_visible()
+    assert await page.locator("#resetViewBtn").is_visible() and await page.locator("#backBtn").is_visible()
+    assert await page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 2")
 
 
 async def flow_thumbnail_http(page: Page, base: str) -> None:
@@ -248,45 +318,45 @@ FLOWS = [
 
 async def run_browser(base: str) -> bool:
     errors: list[str] = []
+    failures: list[str] = []
     passed = 0
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch(headless=True)
-        page = await browser.new_page(viewport={"width": 1440, "height": 900})
-        page.on("console", lambda message: errors.append(f"console {message.type}: {message.text}") if message.type == "error" else None)
-        page.on("pageerror", lambda error: errors.append(f"pageerror: {error}"))
-        for name, flow in FLOWS:
-            try:
-                await flow(page, base)
-                print(f"PASS  {name}", flush=True)
-                passed += 1
-            except Exception as exc:
-                print(f"FAIL  {name}: {type(exc).__name__}: {exc}", flush=True)
-        await browser.close()
+        try:
+            for name, flow in FLOWS:
+                context = await browser.new_context(viewport={"width": 1440, "height": 900})
+                try:
+                    page = await context.new_page()
+                    page.on("console", lambda message, flow=name: errors.append(f"{flow}: console {message.type}: {message.text}") if message.type == "error" else None)
+                    page.on("pageerror", lambda error, flow=name: errors.append(f"{flow}: pageerror: {error}"))
+                    await flow(page, base)
+                    print(f"PASS  {name}", flush=True)
+                    passed += 1
+                except Exception as exc:
+                    detail = f"{name}: {type(exc).__name__}: {exc}"
+                    failures.append(detail)
+                    print(f"FAIL  {detail}", flush=True)
+                finally:
+                    await context.close()
+        finally:
+            await browser.close()
     if errors:
         print("Unexpected browser errors:")
         for error in errors:
             print(f"  {error}")
-    print(f"Summary: {passed}/{len(FLOWS)} flows passed; {len(errors)} browser errors")
-    return passed == len(FLOWS) and not errors
+    print(f"Summary: {passed}/{len(FLOWS)} flows passed; {len(errors)} browser errors; {len(failures)} flow failures")
+    return passed == len(FLOWS) and not errors and not failures
 
 
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="gyo-atlas-e2e-") as temporary:
         run_dir = Path(temporary)
         seed_run(run_dir)
-        port = free_port()
-        base = f"http://127.0.0.1:{port}"
-        process = multiprocessing.Process(target=serve, args=(str(run_dir), port), daemon=True)
-        process.start()
+        process, base = start_server(run_dir)
         try:
-            wait_until_ready(base, process)
-            return 0 if asyncio.run(run_browser(base)) else 1
+            return 0 if asyncio.run(asyncio.wait_for(run_browser(base), timeout=120)) else 1
         finally:
-            process.terminate()
-            process.join(timeout=5)
-            if process.is_alive():
-                process.kill()
-                process.join(timeout=2)
+            stop_server(process)
 
 
 if __name__ == "__main__":
