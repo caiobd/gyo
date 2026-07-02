@@ -24,7 +24,7 @@ function keepInBounds(circle, width, height, padding) {
 
 function relax(circles, width, height, padding) {
   const tolerance = 1e-6;
-  for (let pass = 0; pass < 500; pass++) {
+  for (let pass = 0; pass < 80; pass++) {
     let overlap = false;
     for (let i = 0; i < circles.length; i++) {
       for (let j = i + 1; j < circles.length; j++) {
@@ -50,16 +50,52 @@ function relax(circles, width, height, padding) {
     }
     if (!overlap) return true;
   }
+  return separated(circles);
+}
+
+function separated(circles) {
   return circles.every((a, i) => circles.slice(i + 1).every(b =>
     Math.hypot(a.cx - b.cx, a.cy - b.cy) >= a.r + b.r - 0.01));
 }
 
+function gridFallback(nodes, width, height, padding) {
+  const usableWidth = width - 2 * padding;
+  const usableHeight = height - 2 * padding;
+  const columns = Math.max(1, Math.ceil(Math.sqrt(nodes.length * usableWidth / usableHeight)));
+  const rows = Math.ceil(nodes.length / columns);
+  const cellWidth = usableWidth / columns;
+  const cellHeight = usableHeight / rows;
+  const radius = Math.max(Number.EPSILON, Math.min(cellWidth, cellHeight) * 0.45);
+  const order = nodes.map((node, index) => ({ node, index })).sort((a, b) =>
+    a.node.position[1] - b.node.position[1] ||
+    a.node.position[0] - b.node.position[0] ||
+    a.index - b.index);
+  const placed = new Array(nodes.length);
+  order.forEach(({ node, index }, slot) => {
+    const column = slot % columns;
+    const row = Math.floor(slot / columns);
+    placed[index] = {
+      ...node,
+      cx: padding + (column + 0.5) * cellWidth,
+      cy: padding + (row + 0.5) * cellHeight,
+      r: radius,
+      layoutMode: "grid-fallback",
+    };
+  });
+  return placed;
+}
+
+/**
+ * Fits normalized MDS positions into a viewport. Radius follows sqrt(occupancy)
+ * with a minimum legibility radius; it is intentionally not exact area scaling.
+ */
 export function fitTerritories(nodes, width, height) {
   validate(nodes, width, height);
   if (nodes.length === 0) return [];
 
   const scale = Math.min(width, height);
   const padding = Math.min(12, scale * 0.02);
+  if (nodes.length > 64) return gridFallback(nodes, width, height, padding);
   const maxOccupancy = Math.max(1, ...nodes.map(node => node.occupancy));
   const initial = nodes.map(node => ({
     ...node,
@@ -69,9 +105,9 @@ export function fitTerritories(nodes, width, height) {
   }));
 
   let circles = initial;
-  for (let attempt = 0; attempt < 40; attempt++) {
+  for (let attempt = 0; attempt < 6; attempt++) {
     circles.forEach(circle => keepInBounds(circle, width, height, padding));
-    if (relax(circles, width, height, padding)) return circles;
+    if (relax(circles, width, height, padding) && separated(circles)) return circles;
     circles = initial.map(circle => ({
       ...circle,
       r: circle.r * Math.pow(0.84, attempt + 1),
@@ -79,5 +115,5 @@ export function fitTerritories(nodes, width, height) {
       cy: circle.cy,
     }));
   }
-  return circles;
+  return gridFallback(nodes, width, height, padding);
 }

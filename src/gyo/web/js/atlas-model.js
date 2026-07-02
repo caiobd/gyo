@@ -14,9 +14,12 @@ export function prefixKey(prefix) {
 
 export function createState(payload) {
   if (!payload || typeof payload !== "object") throw new TypeError("payload must be an object");
+  if (!payload.focus || typeof payload.focus !== "object" || Array.isArray(payload.focus)) {
+    throw new TypeError("payload.focus must be an object");
+  }
   return {
     payload,
-    focus: copyPrefix(payload.focus ?? []),
+    focus: copyPrefix(payload.focus.prefix),
     selected: null,
     sampleMode: "representative",
   };

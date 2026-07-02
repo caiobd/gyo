@@ -11,15 +11,37 @@ describe("atlas model", () => {
   });
 
   it("creates initial state without aliasing focus", () => {
-    const payload = { focus: [2], nodes: [] };
+    const payload = {
+      focus: { prefix: [2], level: 1 },
+      children: [{ prefix: [2, 7], occupancy: 3 }],
+      projection: { positions: [[0, 0]] },
+    };
     const state = createState(payload);
     expect(state).toEqual({ payload, focus: [2], selected: null, sampleMode: "representative" });
-    expect(state.focus).not.toBe(payload.focus);
+    expect(state.focus).not.toBe(payload.focus.prefix);
     expect(state.payload).toBe(payload);
   });
 
+  it("validates the atlas payload focus shape", () => {
+    for (const payload of [null, {}, { focus: null }, { focus: [] }, { focus: {} }]) {
+      expect(() => createState(payload)).toThrow();
+    }
+  });
+
+  it("integrates API state with selection and navigation", () => {
+    const payload = {
+      focus: { prefix: [3], level: 1 },
+      children: [{ prefix: [3, 8], occupancy: 4 }],
+      projection: { positions: [[0.25, -0.5]] },
+    };
+    const selected = selectNode(createState(payload), payload.children[0].prefix);
+    expect(enterNode(selected).focus).toEqual([3, 8]);
+    expect(payload.focus.prefix).toEqual([3]);
+    expect(payload.children[0].prefix).toEqual([3, 8]);
+  });
+
   it("selects and enters nodes immutably", () => {
-    const payload = { focus: [1], nodes: [] };
+    const payload = { focus: { prefix: [1], level: 1 }, children: [], projection: {} };
     const initial = createState(payload);
     const prefix = [1, 4];
     const outlierState = setSampleMode(initial, "outliers");
@@ -38,7 +60,7 @@ describe("atlas model", () => {
   });
 
   it("sets only supported sample modes", () => {
-    const state = createState({ focus: [] });
+    const state = createState({ focus: { prefix: [], level: 0 }, children: [], projection: {} });
     for (const mode of ["representative", "outliers", "parent"]) {
       expect(setSampleMode(state, mode).sampleMode).toBe(mode);
     }
