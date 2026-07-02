@@ -283,6 +283,12 @@ async def flow_responsive(page: Page, base: str) -> None:
     assert await page.locator("#atlas").is_visible() and await page.locator("#inspector").is_visible()
     assert await page.locator("#resetViewBtn").is_visible() and await page.locator("#backBtn").is_visible()
     assert await page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 2")
+    await select_internal(page)
+    map_top = await page.locator(".map-panel").evaluate("element => element.getBoundingClientRect().top")
+    await page.locator("#inspector").evaluate("element => element.scrollTo(0, element.scrollHeight)")
+    assert await page.locator("#inspector").evaluate("element => element.scrollTop > 0")
+    assert await page.locator(".map-panel").evaluate("element => element.getBoundingClientRect().top") == map_top
+    assert await page.evaluate("document.documentElement.scrollHeight <= window.innerHeight + 2")
     await page.set_viewport_size({"width": 1440, "height": 900})
     await page.wait_for_function("getComputedStyle(document.querySelector('.workspace')).gridTemplateColumns.split(' ').length === 2")
     desktop_columns = await page.locator(".workspace").evaluate("e => getComputedStyle(e).gridTemplateColumns")

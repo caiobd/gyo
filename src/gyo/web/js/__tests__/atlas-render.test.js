@@ -64,6 +64,14 @@ describe("semantic atlas renderer", () => {
     expect(handlers.enter).toHaveBeenCalledWith(node);
   });
 
+  it("places group entry before the potentially long sample grid", () => {
+    const container = document.createElement("aside");
+    renderInspector(container, node, "representative", {});
+    const enter = container.querySelector(".enter-group");
+    const samples = container.querySelector(".sample-grid");
+    expect(enter.compareDocumentPosition(samples) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("does not leave a selection behind after double click entry", () => {
     vi.useFakeTimers();
     const svg = document.createElementNS(SVG, "svg");

@@ -130,10 +130,10 @@ export function renderInspector(container, node, mode, handlers = {}) {
     const button = document.createElement("button"); button.type = "button"; button.textContent = label; button.setAttribute("aria-pressed", String(mode === key)); button.addEventListener("click", () => handlers.mode?.(key)); tabs.appendChild(button);
   });
   container.appendChild(tabs);
+  if (node.has_children) { const enter = document.createElement("button"); enter.type = "button"; enter.className = "enter-group"; enter.textContent = "Enter group"; enter.addEventListener("click", () => handlers.enter?.(node)); container.appendChild(enter); }
   if (mode === "parent") {
     const comparison = document.createElement("div"); comparison.className = "comparison"; container.appendChild(comparison);
     const parent = document.createElement("section"); const parentTitle = document.createElement("h3"); parentTitle.textContent = "Current focus"; parent.appendChild(parentTitle); sampleGrid(parent, handlers.focus?.samples?.representative); comparison.appendChild(parent);
     const child = document.createElement("section"); const childTitle = document.createElement("h3"); childTitle.textContent = "Selected group"; child.appendChild(childTitle); sampleGrid(child, node.samples?.representative); comparison.appendChild(child);
   } else sampleGrid(container, node.samples?.[mode]);
-  if (node.has_children) { const enter = document.createElement("button"); enter.type = "button"; enter.className = "enter-group"; enter.textContent = "Enter group"; enter.addEventListener("click", () => handlers.enter?.(node)); container.appendChild(enter); }
 }
