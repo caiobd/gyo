@@ -227,6 +227,20 @@ def test_atlas_reports_malformed_serialized_inputs_as_conflicts(
     assert detail in response.json()["detail"]
 
 
+@pytest.mark.parametrize("target", ["embeddings", "codebook"])
+def test_atlas_rejects_complex_vectors(tmp_path, target):
+    _seed_run(tmp_path)
+    if target == "embeddings":
+        path = tmp_path / "embeddings.npy"
+    else:
+        path = tmp_path / "codebooks" / "v1" / "level_0.npy"
+    np.save(path, np.load(path).astype(np.complex64))
+
+    response = TestClient(create_app(str(tmp_path))).get("/api/atlas/root")
+    assert response.status_code == 409
+    assert "real numeric" in response.json()["detail"]
+
+
 def test_atlas_joins_metadata_by_item_id(tmp_path):
     _seed_run(tmp_path)
     codes = pd.read_parquet(tmp_path / "codes.parquet")

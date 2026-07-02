@@ -37,14 +37,13 @@ def _level_columns(columns):
 
 def _validated_codes(values):
     raw = np.asarray(values)
-    if raw.ndim != 2 or not np.issubdtype(raw.dtype, np.number):
-        raise ValueError("Atlas codes must be a numeric 2D array")
+    if raw.ndim != 2 or raw.dtype.kind not in "iuf":
+        raise ValueError("Atlas codes must be a real numeric 2D array")
     if not np.isfinite(raw).all():
         raise ValueError("Atlas codes must be finite")
     if not np.equal(raw, np.floor(raw)).all():
         raise ValueError("Atlas codes must contain integral values")
-    bounds = np.iinfo(np.int64)
-    if np.any(raw < bounds.min) or np.any(raw > bounds.max):
+    if np.any(raw < -(2**63)) or np.any(raw >= 2**63):
         raise ValueError("Atlas codes must fit in int64")
     return raw.astype(np.int64)
 
@@ -54,7 +53,7 @@ def _validated_final_residual(values, num_rows):
     if (
         raw.ndim != 1
         or raw.shape[0] != num_rows
-        or not np.issubdtype(raw.dtype, np.number)
+        or raw.dtype.kind not in "iuf"
     ):
         raise ValueError("Atlas final_residual must be numeric, 1D, and match codes rows")
     if not np.isfinite(raw).all():
@@ -182,9 +181,11 @@ def create_app(data_dir: str) -> FastAPI:
         if (
             codes.ndim != 2
             or embeddings.ndim != 2
-            or not np.issubdtype(embeddings.dtype, np.number)
+            or embeddings.dtype.kind not in "iuf"
         ):
-            raise HTTPException(409, "Atlas codes and embeddings must be 2D")
+            raise HTTPException(
+                409, "Atlas codes and embeddings must be real numeric 2D arrays"
+            )
         if codes.shape[0] != embeddings.shape[0]:
             raise HTTPException(409, "Atlas codes and embeddings rows must match")
         if codes.shape[1] != rq.num_levels:
@@ -200,8 +201,10 @@ def create_app(data_dir: str) -> FastAPI:
             missing = ", ".join(str(item_id) for item_id in missing_ids[:20])
             raise HTTPException(409, f"metadata missing for item ids: {missing}")
         for level, codebook in enumerate(rq.codebooks):
-            if codebook.ndim != 2 or not np.issubdtype(codebook.dtype, np.number):
-                raise HTTPException(409, f"Atlas codebook level {level} must be 2D")
+            if codebook.ndim != 2 or codebook.dtype.kind not in "iuf":
+                raise HTTPException(
+                    409, f"Atlas codebook level {level} must be a real numeric 2D array"
+                )
             if not np.isfinite(codebook).all():
                 raise HTTPException(409, f"Atlas codebook level {level} must be finite")
             if codebook.shape[0] != rq.codebook_size:
