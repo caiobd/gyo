@@ -65,7 +65,7 @@ function gridFallback(nodes, width, height, padding) {
   const rows = Math.ceil(nodes.length / columns);
   const cellWidth = usableWidth / columns;
   const cellHeight = usableHeight / rows;
-  const cellRadius = Math.max(Number.EPSILON, Math.min(cellWidth, cellHeight) * 0.48);
+  const cellRadius = Math.min(cellWidth, cellHeight) * 0.48;
   const maxOccupancy = Math.max(1, ...nodes.map(node => node.occupancy));
   const minFactor = 0.45;
   const order = nodes.map((node, index) => ({ node, index })).sort((a, b) =>

@@ -76,4 +76,16 @@ describe("fitTerritories", () => {
         .toBeGreaterThanOrEqual(placed[i].r + placed[j].r - 0.01);
     }
   });
+
+  it("scales fallback radii into arbitrarily tiny finite viewports", () => {
+    const size = 1e-20;
+    const nodes = Array.from({ length: 65 }, (_, index) => node([0, 0], index + 1));
+    const placed = fitTerritories(nodes, size, size);
+    expect(placed.every(({ cx, cy, r }) =>
+      [cx, cy, r].every(Number.isFinite) && r >= 0 && cx >= r && cy >= r && cx + r <= size && cy + r <= size)).toBe(true);
+    for (let i = 0; i < placed.length; i++) for (let j = i + 1; j < placed.length; j++) {
+      expect(Math.hypot(placed[i].cx - placed[j].cx, placed[i].cy - placed[j].cy) + 1e-35)
+        .toBeGreaterThanOrEqual(placed[i].r + placed[j].r);
+    }
+  });
 });
