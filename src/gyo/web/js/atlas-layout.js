@@ -1,5 +1,19 @@
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
+export function aggregateDenseChildren(children, maxVisible = 63, expanded = false) {
+  if (!Array.isArray(children)) throw new TypeError("children must be an array");
+  if (expanded || children.length <= maxVisible + 1) return children;
+  const ranked = children.map((node, index) => ({ node, index })).sort((a, b) =>
+    b.node.occupancy - a.node.occupancy || a.index - b.index);
+  const kept = ranked.slice(0, maxVisible).sort((a, b) => a.index - b.index).map(item => item.node);
+  const hidden = ranked.slice(maxVisible).sort((a, b) => a.index - b.index).map(item => item.node);
+  const occupancy = hidden.reduce((sum, node) => sum + node.occupancy, 0);
+  const denominator = occupancy || hidden.length || 1;
+  const position = [0, 1].map(axis => hidden.reduce((sum, node) =>
+    sum + node.position[axis] * (occupancy ? node.occupancy : 1), 0) / denominator);
+  return [...kept, { aggregate: true, count: hidden.length, occupancy, position, label: `+${hidden.length} groups`, has_children: false, samples: {} }];
+}
+
 export function displayStress(distanceMatrix, placements) {
   if (!Array.isArray(distanceMatrix) || !Array.isArray(placements)) throw new TypeError("distances and placements must be arrays");
   const count = distanceMatrix.length;

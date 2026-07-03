@@ -1,5 +1,5 @@
 import { fetchAtlas, fetchDatasetId } from "./api.js";
-import { displayStress, fitTerritories } from "./atlas-layout.js";
+import { aggregateDenseChildren, displayStress, fitTerritories } from "./atlas-layout.js";
 import { createState, parentPrefix, prefixKey, selectNode, setSampleMode } from "./atlas-model.js";
 import { cancelMapInteractions, renderInspector, renderMap } from "./atlas-render.js";
 
@@ -32,11 +32,13 @@ export function startAtlas(doc = document, win = window) {
   const status = doc.getElementById("projectionStatus");
   const crumbs = doc.getElementById("breadcrumbs");
   const back = doc.getElementById("backBtn");
+  const levelControl = doc.getElementById("levelControl");
+  const collapseDense = doc.getElementById("collapseDenseBtn");
   const retry = doc.getElementById("retryBtn") || error.querySelector("button");
   const brand = doc.querySelector(".brand");
   const cache = new Map(), guard = createRequestGuard(), removers = [];
   let state, placements = [], successful = false, currentPrefix = "root";
-  let datasetId = null, layoutStress = 0;
+  let datasetId = null, layoutStress = 0, denseExpanded = false, aggregated = false;
   let view, baseView, drag = null, suppressClick = false, resizeTimer, destroyed = false;
 
   const on = (target, type, listener, options) => {
@@ -51,7 +53,8 @@ export function startAtlas(doc = document, win = window) {
     const projection = state.payload.projection || {};
     const fallback = placements.some(item => item.layoutMode === "grid-fallback");
     const parts = [];
-    if (Number.isFinite(layoutStress)) parts.push(`Layout stress ${layoutStress.toFixed(3)}`);
+    if (aggregated) parts.push("Layout stress unavailable while small groups are aggregated");
+    else if (Number.isFinite(layoutStress)) parts.push(`Layout stress ${layoutStress.toFixed(3)}`);
     if (Number.isFinite(projection.raw_stress ?? projection.stress)) parts.push(`raw MDS ${(projection.raw_stress ?? projection.stress).toFixed(3)}`);
     parts.push("projected approximation among siblings");
     if (fallback) parts.push("grid fallback: semantic distances distorted");
@@ -62,32 +65,49 @@ export function startAtlas(doc = document, win = window) {
     for (let i = 0; i <= state.focus.length; i++) {
       const prefix = state.focus.slice(0, i), button = doc.createElement("button");
       button.type = "button"; button.textContent = i ? String(state.focus[i - 1]) : "Root";
+      button.dataset.depth = String(i);
       if (i === state.focus.length) button.setAttribute("aria-current", "page");
       else button.addEventListener("click", () => load(prefixKey(prefix)));
       crumbs.appendChild(button); if (i < state.focus.length) crumbs.append("›");
     }
     back.disabled = state.focus.length === 0;
   }
+  function renderLevelControl() {
+    if (!levelControl) return;
+    const current = state.focus.length + 1, total = Math.max(current, Number(state.payload.num_levels) || current);
+    levelControl.replaceChildren();
+    for (let level = 1; level <= Math.min(current, total); level++) {
+      const option = doc.createElement("option"); option.value = String(level); option.textContent = `Level ${level}`; option.selected = level === current; levelControl.appendChild(option);
+    }
+    levelControl.disabled = levelControl.options.length <= 1;
+  }
   function renderAll(reflow = true) {
     if (!state || destroyed) return;
     if (reflow) {
-      const size = bounds(); placements = fitTerritories(state.payload.children, size.width, size.height);
+      const size = bounds(), children = aggregateDenseChildren(state.payload.children, 63, denseExpanded);
+      aggregated = children.some(item => item.aggregate); placements = fitTerritories(children, size.width, size.height);
       const matrix = state.payload.projection?.distances;
-      layoutStress = Array.isArray(matrix) && matrix.length === placements.length
+      layoutStress = !aggregated && Array.isArray(matrix) && matrix.length === placements.length
         ? displayStress(matrix, placements)
         : (state.payload.projection?.raw_stress ?? state.payload.projection?.stress ?? 0);
       resetView();
     }
+    const size = bounds();
     renderMap(svg, placements, state, {
+      width: size.width, height: size.height,
       select(node) { state = selectNode(state, node.prefix); renderAll(false); },
       enter(node) { if (node.has_children) load(prefixKey(node.prefix)); },
+      expand() { denseExpanded = true; renderAll(true); },
+      path(prefix) { crumbs.querySelectorAll("button").forEach(button => button.classList.toggle("is-path", Boolean(prefix) && Number(button.dataset.depth) <= state.focus.length)); },
     });
     renderInspector(inspector, selectedNode(), state.sampleMode, {
       focus: state.payload.focus,
       mode(mode) { state = setSampleMode(state, mode); renderAll(false); },
       enter(node) { if (node.has_children) load(prefixKey(node.prefix)); },
     });
-    renderBreadcrumbs(); showStatus();
+    renderBreadcrumbs(); renderLevelControl();
+    if (collapseDense) collapseDense.hidden = !(denseExpanded && state.payload.children.length > 64);
+    showStatus();
   }
   async function load(prefix = "root", force = false) {
     if (destroyed) return;
@@ -101,7 +121,7 @@ export function startAtlas(doc = document, win = window) {
       if (!guard.isCurrent(request.id) || destroyed) return;
       if (payload.dataset_id && datasetId && payload.dataset_id !== datasetId) cache.clear();
       datasetId = payload.dataset_id || datasetId;
-      cache.set(datasetId ? `${datasetId}:${prefix}` : prefix, payload); state = createState(payload); successful = true; renderAll();
+      cache.set(datasetId ? `${datasetId}:${prefix}` : prefix, payload); state = createState(payload); denseExpanded = false; successful = true; renderAll();
     } catch (reason) {
       if (reason?.name === "AbortError" || !guard.isCurrent(request.id) || destroyed) return;
       error.querySelector("p").textContent = reason instanceof Error ? reason.message : "Unable to load atlas";
@@ -118,6 +138,8 @@ export function startAtlas(doc = document, win = window) {
   on(retry, "click", () => load(currentPrefix, true));
   on(brand, "click", event => { event.preventDefault(); load("root"); });
   on(back, "click", () => state && load(prefixKey(parentPrefix(state.focus))));
+  if (levelControl) on(levelControl, "change", () => state && load(prefixKey(state.focus.slice(0, Number(levelControl.value) - 1))));
+  if (collapseDense) on(collapseDense, "click", () => { denseExpanded = false; renderAll(true); });
   on(doc.getElementById("resetViewBtn"), "click", resetView);
   on(win, "keydown", event => { if (event.key === "Escape" && state?.focus.length) load(prefixKey(parentPrefix(state.focus))); });
   on(win, "resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => renderAll(true), 100); });

@@ -140,6 +140,13 @@ async def boot(page: Page, base: str) -> None:
 async def flow_boot(page: Page, base: str) -> None:
     await boot(page, base)
     assert await page.locator("#atlas .territory").count() >= 3
+    assert await page.locator("#atlas .focus-boundary").count() == 1
+    assert await page.locator("#atlas .focus-anchor").count() == 1
+    assert await page.locator("#atlas .hierarchy-link").count() == await page.locator("#atlas .territory").count()
+    target = page.locator("#atlas .territory").first
+    await target.hover()
+    assert await target.evaluate("node => node.classList.contains('is-path')")
+    assert await page.locator("#atlas .focus-anchor").evaluate("node => node.classList.contains('is-path')")
     assert "gyo" in (await page.locator(".brand").inner_text()).lower()
     assert "Layout stress" in await page.locator("#projectionStatus").inner_text()
     assert await page.locator("#mapError").is_hidden()
@@ -212,6 +219,15 @@ async def flow_enter_and_breadcrumbs(page: Page, base: str) -> None:
     assert await crumbs.nth(1).get_attribute("aria-current") == "page"
     assert all(prefix.startswith("2,") for prefix in await page.locator("#atlas .territory").evaluate_all("nodes => nodes.map(n => n.dataset.prefix)"))
     assert await page.locator("#atlas .territory").count() >= 2
+    level = page.locator("#levelControl")
+    assert await level.input_value() == "2"
+    await level.focus()
+    await level.press("Home")
+    await level.press("Enter")
+    await page.wait_for_function("document.querySelector('#breadcrumbs [aria-current=page]')?.textContent === 'Root'")
+    await select_internal(page)
+    await page.get_by_role("button", name="Enter group", exact=True).click()
+    await page.wait_for_function("document.querySelector('#breadcrumbs [aria-current=page]')?.textContent === '2'")
     await page.get_by_role("button", name="Root", exact=True).click()
     await page.wait_for_function("document.querySelector('#breadcrumbs [aria-current=page]')?.textContent === 'Root'")
     assert "Root" in await page.locator("#breadcrumbs [aria-current=page]").inner_text()

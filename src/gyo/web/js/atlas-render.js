@@ -31,16 +31,30 @@ export function renderMap(svg, placements, state, handlers = {}) {
   svg.replaceChildren();
   const defs = svgEl("defs");
   svg.appendChild(defs);
+  const width = handlers.width || 800, height = handlers.height || 600;
+  const boundary = svgEl("rect"); boundary.classList.add("focus-boundary");
+  boundary.setAttribute("x", 4); boundary.setAttribute("y", 4); boundary.setAttribute("width", Math.max(0, width - 8)); boundary.setAttribute("height", Math.max(0, height - 8)); boundary.setAttribute("rx", 18); svg.appendChild(boundary);
+  const anchorX = width / 2, anchorY = 22;
+  const links = svgEl("g"); links.classList.add("hierarchy-links"); svg.appendChild(links);
+  placements.forEach((node, index) => {
+    const link = svgEl("line"); link.classList.add("hierarchy-link"); link.dataset.index = String(index);
+    link.setAttribute("x1", anchorX); link.setAttribute("y1", anchorY); link.setAttribute("x2", node.cx); link.setAttribute("y2", node.cy); links.appendChild(link);
+  });
+  const anchor = svgEl("g"); anchor.classList.add("focus-anchor");
+  const anchorCircle = svgEl("circle"); anchorCircle.setAttribute("cx", anchorX); anchorCircle.setAttribute("cy", anchorY); anchorCircle.setAttribute("r", 7);
+  const anchorLabel = svgEl("text"); anchorLabel.setAttribute("x", anchorX + 12); anchorLabel.setAttribute("y", anchorY + 4); anchorLabel.textContent = prefixName(state.focus || []); anchor.append(anchorCircle, anchorLabel); svg.appendChild(anchor);
+  if (!placements.length) { const empty = svgEl("text"); empty.classList.add("empty-level"); empty.setAttribute("x", width / 2); empty.setAttribute("y", height / 2); empty.textContent = "No child groups at this level"; svg.appendChild(empty); }
   const selectedIndex = placements.findIndex(node => samePrefix(state.selected, node.prefix));
   placements.forEach((node, index) => {
     const group = svgEl("g");
     group.classList.add("territory");
-    group.dataset.prefix = prefixKey(node.prefix);
+    if (node.aggregate) group.classList.add("aggregate");
+    group.dataset.prefix = node.aggregate ? "aggregate" : prefixKey(node.prefix);
     if (samePrefix(state.selected, node.prefix)) group.classList.add("selected");
-    group.setAttribute("role", "treeitem");
-    group.setAttribute("tabindex", String(index === (selectedIndex < 0 ? 0 : selectedIndex) ? 0 : -1));
+    group.setAttribute("role", node.aggregate ? "button" : "treeitem");
+    group.setAttribute("tabindex", String(node.aggregate || index === (selectedIndex < 0 ? 0 : selectedIndex) ? 0 : -1));
     group.setAttribute("aria-selected", String(samePrefix(state.selected, node.prefix)));
-    group.setAttribute("aria-label", `${prefixName(node.prefix)}, ${node.occupancy} items`);
+    group.setAttribute("aria-label", node.aggregate ? `${node.label}, ${node.occupancy} items` : `${prefixName(node.prefix)}, ${node.occupancy} items`);
     const circle = svgEl("circle");
     circle.setAttribute("cx", node.cx); circle.setAttribute("cy", node.cy); circle.setAttribute("r", node.r);
     group.appendChild(circle);
@@ -72,12 +86,19 @@ export function renderMap(svg, placements, state, handlers = {}) {
       group.appendChild(image);
     });
     const label = svgEl("text"); label.setAttribute("x", node.cx); label.setAttribute("y", node.cy - node.r + 18);
-    label.textContent = prefixName(node.prefix); label.classList.add("territory-label"); group.appendChild(label);
+    label.textContent = node.aggregate ? node.label : prefixName(node.prefix); label.classList.add("territory-label"); group.appendChild(label);
     const occupancy = svgEl("text"); occupancy.setAttribute("x", node.cx); occupancy.setAttribute("y", node.cy + node.r - 10);
     occupancy.textContent = `${node.occupancy} items`; occupancy.classList.add("territory-count"); group.appendChild(occupancy);
-    group.addEventListener("click", () => { clearTimeout(session.clickTimer); session.clickTimer = setTimeout(() => { session.clickTimer = null; handlers.select?.(node); }, 180); });
+    const setPath = active => {
+      group.classList.toggle("is-path", active); anchor.classList.toggle("is-path", active);
+      svg.classList.toggle("has-active-path", active); links.children[index]?.classList.toggle("is-path", active); handlers.path?.(active ? node.prefix : null);
+    };
+    group.addEventListener("pointerenter", () => setPath(true)); group.addEventListener("pointerleave", () => setPath(false));
+    group.addEventListener("focus", () => setPath(true)); group.addEventListener("blur", () => setPath(false));
+    group.addEventListener("click", () => { if (node.aggregate) { handlers.expand?.(); return; } clearTimeout(session.clickTimer); session.clickTimer = setTimeout(() => { session.clickTimer = null; handlers.select?.(node); }, 180); });
     group.addEventListener("dblclick", event => { if (!node.has_children) return; clearTimeout(session.clickTimer); session.clickTimer = null; event.preventDefault(); handlers.enter?.(node); });
     group.addEventListener("keydown", event => {
+      if (node.aggregate && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); handlers.expand?.(); return; }
       if (event.key === "Enter") { event.preventDefault(); handlers.select?.(node); }
       if (event.key === " " && node.has_children) { event.preventDefault(); handlers.enter?.(node); }
       const territories = [...svg.querySelectorAll('[role="treeitem"]')];

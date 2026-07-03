@@ -1,9 +1,26 @@
 import { describe, expect, it } from "vitest";
-import { displayStress, fitTerritories } from "../atlas-layout.js";
+import { aggregateDenseChildren, displayStress, fitTerritories } from "../atlas-layout.js";
 
 const node = (position, occupancy) => ({ position, occupancy });
 
 describe("fitTerritories", () => {
+  it("aggregates dense children stably with weighted position and occupancy", () => {
+    const children = Array.from({ length: 65 }, (_, i) => ({ prefix: [i], occupancy: i + 1, position: [i / 64, -i / 64] }));
+    const result = aggregateDenseChildren(children);
+    expect(result).toHaveLength(64);
+    expect(result.slice(0, 63).map(item => item.prefix[0])).toEqual(Array.from({ length: 63 }, (_, i) => i + 2));
+    expect(result.at(-1)).toMatchObject({ aggregate: true, count: 2, occupancy: 3, label: "+2 groups" });
+    expect(result.at(-1).position[0]).toBeCloseTo(1 / 64 * 2 / 3);
+    expect(aggregateDenseChildren(children)).toEqual(result);
+    expect(aggregateDenseChildren(children, 63, true)).toBe(children);
+  });
+
+  it("preserves occupancy when aggregating 256 children", () => {
+    const children = Array.from({ length: 256 }, (_, i) => ({ prefix: [i], occupancy: (i % 7) + 1, position: [0, 0] }));
+    const visible = aggregateDenseChildren(children);
+    expect(visible.reduce((sum, item) => sum + item.occupancy, 0)).toBe(children.reduce((sum, item) => sum + item.occupancy, 0));
+    expect(visible.at(-1).count).toBe(193);
+  });
   it("returns an empty layout for no nodes", () => {
     expect(fitTerritories([], 640, 480)).toEqual([]);
   });
@@ -14,10 +31,10 @@ describe("fitTerritories", () => {
     expect(placed[0].cx).toBeLessThan(placed[1].cx);
     expect(placed[0].r).toBeGreaterThan(placed[1].r);
     for (const item of placed) {
-      expect(item.cx - item.r).toBeGreaterThanOrEqual(0);
-      expect(item.cy - item.r).toBeGreaterThanOrEqual(0);
-      expect(item.cx + item.r).toBeLessThanOrEqual(800);
-      expect(item.cy + item.r).toBeLessThanOrEqual(400);
+      expect(item.cx - item.r).toBeGreaterThanOrEqual(4);
+      expect(item.cy - item.r).toBeGreaterThanOrEqual(4);
+      expect(item.cx + item.r).toBeLessThanOrEqual(796);
+      expect(item.cy + item.r).toBeLessThanOrEqual(396);
     }
     expect(nodes).toEqual([node([-1, 0], 100), node([1, 0], 25)]);
   });

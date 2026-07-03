@@ -34,6 +34,33 @@ describe("semantic atlas renderer", () => {
     expect(svg.getAttribute("viewBox")).toBe("0 0 720 480");
   });
 
+  it("renders hierarchy structure and updates path state for pointer and keyboard focus", () => {
+    const svg = document.createElementNS(SVG, "svg"); const path = vi.fn();
+    renderMap(svg, [{ ...node, cx: 100, cy: 90, r: 20 }], { selected: null, focus: [4] }, { width: 240, height: 180, path });
+    expect(svg.querySelector(".focus-boundary")).not.toBeNull();
+    expect(svg.querySelector(".focus-anchor")?.textContent).toContain("Group 4");
+    expect(svg.querySelectorAll(".hierarchy-link")).toHaveLength(1);
+    const territory = svg.querySelector(".territory");
+    territory.dispatchEvent(new Event("pointerenter"));
+    expect(territory.classList.contains("is-path")).toBe(true);
+    expect(svg.querySelector(".focus-anchor").classList.contains("is-path")).toBe(true);
+    expect(path).toHaveBeenLastCalledWith(node.prefix);
+    territory.dispatchEvent(new Event("pointerleave")); expect(path).toHaveBeenLastCalledWith(null);
+    territory.dispatchEvent(new FocusEvent("focus")); expect(path).toHaveBeenLastCalledWith(node.prefix);
+    territory.dispatchEvent(new FocusEvent("blur")); expect(path).toHaveBeenLastCalledWith(null);
+    renderMap(svg, [], { selected: null, focus: [4] }, { width: 240, height: 180 });
+    expect(svg.textContent).toContain("No child groups at this level");
+    expect(svg.querySelector(".focus-anchor")).not.toBeNull();
+  });
+
+  it("expands aggregate buttons without selecting or entering", () => {
+    const svg = document.createElementNS(SVG, "svg"); const handlers = { expand: vi.fn(), select: vi.fn(), enter: vi.fn() };
+    renderMap(svg, [{ aggregate: true, label: "+2 groups", count: 2, occupancy: 3, position: [0, 0], cx: 100, cy: 90, r: 20 }], { selected: null, focus: [] }, handlers);
+    const button = svg.querySelector('[role="button"]');
+    button.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true })); button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(handlers.expand).toHaveBeenCalledTimes(2); expect(handlers.select).not.toHaveBeenCalled(); expect(handlers.enter).not.toHaveBeenCalled();
+  });
+
   it("renders inspector text without injection and omits unavailable metrics", () => {
     const container = document.createElement("aside");
     renderInspector(container, { ...node, purity: null, mean_residual: undefined }, "representative", {});

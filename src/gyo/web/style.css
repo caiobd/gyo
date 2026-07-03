@@ -109,7 +109,10 @@ button:hover {
   left: 0.8rem;
   display: flex;
   gap: 0.4rem;
+  align-items: center;
+  flex-wrap: wrap;
 }
+.map-toolbar label { color: var(--muted); font-size: 0.82rem; }
 #atlas {
   display: block;
   width: 100%;
@@ -122,6 +125,16 @@ button:hover {
   stroke: var(--line);
   stroke-width: 2;
 }
+.focus-boundary { fill: none; stroke: color-mix(in srgb, var(--accent) 28%, var(--line)); stroke-width: 1.5; stroke-dasharray: 5 7; }
+.hierarchy-link { stroke: color-mix(in srgb, var(--muted) 35%, transparent); stroke-width: 1; pointer-events: none; }
+.focus-anchor circle { fill: var(--accent); stroke: var(--canvas); stroke-width: 2; }
+.focus-anchor text { fill: var(--muted); font-size: 11px; }
+.hierarchy-link.is-path { stroke: var(--accent); stroke-width: 2; }
+.focus-anchor.is-path text { fill: var(--text); }
+#atlas.has-active-path .territory:not(.is-path) { opacity: .42; }
+.territory.aggregate circle { fill: var(--surface-raised); stroke-dasharray: 4 3; }
+.empty-level { fill: var(--muted); text-anchor: middle; font-size: 14px; }
+#breadcrumbs button.is-path { color: var(--accent); }
 .territory:hover circle,
 .territory:focus circle {
   stroke: var(--accent);
@@ -143,6 +156,7 @@ button:hover {
   stroke-linejoin: round;
   font-weight: 700;
 }
+@media (prefers-reduced-motion: reduce) { .territory, .hierarchy-link { transition: none !important; } }
 .territory-count {
   fill: var(--muted);
   font-size: 12px;

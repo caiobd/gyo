@@ -12,7 +12,7 @@ const child = { prefix: [1], occupancy: 4, position: [0, 0], has_children: true,
 
 function shell() {
   document.body.replaceChildren();
-  document.body.insertAdjacentHTML("afterbegin", `<a class="brand" href="#">gyo</a><nav id="breadcrumbs"></nav><output id="projectionStatus"></output><button id="backBtn"></button><button id="resetViewBtn"></button><div id="mapLoading" hidden></div><svg id="atlas"></svg><div id="mapError" hidden><p></p><button id="retryBtn"></button></div><aside id="inspector"></aside>`);
+  document.body.insertAdjacentHTML("afterbegin", `<a class="brand" href="#">gyo</a><nav id="breadcrumbs"></nav><output id="projectionStatus"></output><button id="backBtn"></button><button id="resetViewBtn"></button><label>Level <select id="levelControl"></select></label><button id="collapseDenseBtn" hidden></button><div id="mapLoading" hidden></div><svg id="atlas"></svg><div id="mapError" hidden><p></p><button id="retryBtn"></button></div><aside id="inspector"></aside>`);
   const svg = document.getElementById("atlas");
   svg.getBoundingClientRect = () => ({ width: 800, height: 600, left: 0, top: 0 });
   svg.setPointerCapture = vi.fn(); svg.releasePointerCapture = vi.fn();
@@ -68,11 +68,32 @@ describe("atlas orchestration", () => {
     const many = Array.from({ length: 65 }, (_, i) => ({ ...child, prefix: [i], position: [0, 0] }));
     vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true, json: async () => payload([], many) });
     vi.useFakeTimers(); const app = startAtlas(); await vi.runAllTimersAsync();
-    expect(document.getElementById("projectionStatus").textContent).toMatch(/Layout stress 0.125.*raw MDS 0.125.*projected approximation among siblings.*semantic distances distorted/);
+    expect(document.getElementById("projectionStatus").textContent).toMatch(/stress unavailable while small groups are aggregated/);
     expect(document.getElementById("projectionStatus").classList.contains("warning")).toBe(true);
     svg.setAttribute("viewBox", "1 2 3 4"); window.dispatchEvent(new Event("resize")); await vi.runAllTimersAsync();
     expect(svg.getAttribute("viewBox")).toBe("0 0 800 600");
     app.destroy(); vi.useRealTimers();
+  });
+
+  it("expands and collapses dense groups without loading the aggregate", async () => {
+    const svg = shell(); const many = Array.from({ length: 65 }, (_, i) => ({ ...child, prefix: [i], occupancy: i + 1, position: [0, 0] }));
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true, json: async () => ({ ...payload([], many), num_levels: 3 }) });
+    vi.useFakeTimers(); const app = startAtlas(); await vi.runAllTimersAsync();
+    expect(svg.querySelectorAll(".territory")).toHaveLength(64);
+    svg.querySelector(".territory.aggregate").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(svg.querySelectorAll(".territory")).toHaveLength(65); expect(fetch).toHaveBeenCalledTimes(2);
+    document.getElementById("collapseDenseBtn").click(); expect(svg.querySelectorAll(".territory")).toHaveLength(64);
+    app.destroy(); vi.useRealTimers();
+  });
+
+  it("loads the selected reachable comparison level at a leaf", async () => {
+    shell(); const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async url => ({ ok: true, json: async () => ({ ...payload(url.endsWith("1.2") ? [1, 2] : [1], []), num_levels: 4 }) }));
+    const app = startAtlas(); await flush(); await app.load("1.2"); await flush();
+    const control = document.getElementById("levelControl");
+    expect([...control.options].map(option => option.value)).toEqual(["1", "2", "3"]);
+    control.value = "2"; control.dispatchEvent(new Event("change", { bubbles: true })); await flush();
+    expect(fetch.mock.calls.some(([url]) => url === "/api/atlas/1")).toBe(true); expect(document.getElementById("backBtn").disabled).toBe(false);
+    app.destroy();
   });
 
   it("clamps zoom and suppresses only the click synthesized by a drag", async () => {
