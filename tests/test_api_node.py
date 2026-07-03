@@ -35,9 +35,10 @@ def test_api_node_returns_items_for_leaf_and_internal(tmp_path):
 
 
 def test_js_module_route(tmp_path, monkeypatch):
-    (tmp_path / "codes.parquet")  # not needed; route is static
     import gyo.api.server as srv
-    js_dir = srv.WEB / "js"
+    web_dir = tmp_path / "web"
+    monkeypatch.setattr(srv, "WEB", web_dir)
+    js_dir = web_dir / "js"
     js_dir.mkdir(parents=True, exist_ok=True)
     (js_dir / "ping.js").write_text("export const ping = 1;\n")
     client = TestClient(create_app(str(tmp_path)))
