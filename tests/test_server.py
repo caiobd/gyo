@@ -6,7 +6,7 @@ import pandas as pd
 import pytest
 from PIL import Image
 from fastapi.testclient import TestClient
-from gyo.api.server import create_app
+from gyo.api.server import create_app, _dataset_fingerprint
 from gyo.api.server import _level_columns, _validated_final_residual
 
 
@@ -104,12 +104,19 @@ def test_atlas_root_contract(tmp_path):
     assert body["focus"]["prefix"] == []
     assert {tuple(child["prefix"]) for child in body["children"]} == {(0,), (1,)}
     assert all(len(child["position"]) == 2 for child in body["children"])
+    assert body["dataset_id"] == _dataset_fingerprint(tmp_path)
+    assert body["num_levels"] == 2
     assert body["projection"] == {
         "method": "metric-mds",
         "metric": "euclidean",
+        "raw_stress": body["projection"]["raw_stress"],
         "stress": body["projection"]["stress"],
-        "warning": body["projection"]["stress"] > 0.10,
+        "distances": body["projection"]["distances"],
     }
+    distances = np.asarray(body["projection"]["distances"])
+    assert distances.shape == (len(body["children"]), len(body["children"]))
+    np.testing.assert_allclose(distances, distances.T)
+    np.testing.assert_allclose(np.diag(distances), 0)
     for node in [body["focus"], *body["children"]]:
         assert set(node["samples"]) == {"representative", "outliers"}
         assert all(
@@ -117,6 +124,64 @@ def test_atlas_root_contract(tmp_path):
             for item in node["samples"]["representative"]
         )
     assert "embeddings" not in body
+
+
+def test_dataset_fingerprint_is_stable_and_changes_with_input(tmp_path):
+    _seed_run(tmp_path)
+    first = _dataset_fingerprint(tmp_path)
+    assert _dataset_fingerprint(tmp_path) == first
+    values = np.load(tmp_path / "codebooks/v1/level_0.npy")
+    values[0, 0] = 9
+    np.save(tmp_path / "codebooks/v1/level_0.npy", values)
+    assert _dataset_fingerprint(tmp_path) != first
+
+
+def test_atlas_mutation_invalidates_loaded_run(tmp_path):
+    _seed_run(tmp_path)
+    client = TestClient(create_app(str(tmp_path)))
+    first = client.get("/api/atlas/root").json()
+    values = np.load(tmp_path / "codebooks/v1/level_0.npy")
+    values[1] = [5, 0]
+    np.save(tmp_path / "codebooks/v1/level_0.npy", values)
+    second = client.get("/api/atlas/root").json()
+    assert second["dataset_id"] != first["dataset_id"]
+    assert second["projection"]["distances"] != first["projection"]["distances"]
+
+
+def test_geometry_persists_across_app_instances(tmp_path, monkeypatch):
+    _seed_run(tmp_path)
+    import gyo.api.server as server
+    calls = 0
+    original = server.metric_mds
+    def counted(distances):
+        nonlocal calls
+        calls += 1
+        return original(distances)
+    monkeypatch.setattr(server, "metric_mds", counted)
+    TestClient(server.create_app(str(tmp_path))).get("/api/atlas/root")
+    TestClient(server.create_app(str(tmp_path))).get("/api/atlas/root")
+    assert calls == 1
+
+
+def test_corrupt_geometry_cache_is_rebuilt(tmp_path):
+    _seed_run(tmp_path)
+    cache = tmp_path / "atlas/v1/geometry.json"
+    cache.parent.mkdir(parents=True)
+    cache.write_text("not json")
+    response = TestClient(create_app(str(tmp_path))).get("/api/atlas/root")
+    assert response.status_code == 200
+    assert json.loads(cache.read_text())["dataset_id"] == response.json()["dataset_id"]
+
+
+def test_unwritable_geometry_cache_falls_back_to_memory(tmp_path, monkeypatch):
+    _seed_run(tmp_path)
+    import gyo.api.server as server
+    monkeypatch.setattr(server.tempfile, "NamedTemporaryFile", lambda *args, **kwargs: (_ for _ in ()).throw(OSError("read only")))
+    client = TestClient(server.create_app(str(tmp_path)))
+    first = client.get("/api/atlas/root")
+    second = client.get("/api/atlas/root")
+    assert first.status_code == second.status_code == 200
+    assert first.json()["children"] == second.json()["children"]
 
 
 def test_atlas_internal_prefix_and_leaf(tmp_path):

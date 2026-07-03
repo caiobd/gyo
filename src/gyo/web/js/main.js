@@ -1,5 +1,5 @@
 import { fetchAtlas } from "./api.js";
-import { fitTerritories } from "./atlas-layout.js";
+import { displayStress, fitTerritories } from "./atlas-layout.js";
 import { createState, parentPrefix, prefixKey, selectNode, setSampleMode } from "./atlas-model.js";
 import { cancelMapInteractions, renderInspector, renderMap } from "./atlas-render.js";
 
@@ -36,6 +36,7 @@ export function startAtlas(doc = document, win = window) {
   const brand = doc.querySelector(".brand");
   const cache = new Map(), guard = createRequestGuard(), removers = [];
   let state, placements = [], successful = false, currentPrefix = "root";
+  let datasetId = null, layoutStress = 0;
   let view, baseView, drag = null, suppressClick = false, resizeTimer, destroyed = false;
 
   const on = (target, type, listener, options) => {
@@ -50,10 +51,11 @@ export function startAtlas(doc = document, win = window) {
     const projection = state.payload.projection || {};
     const fallback = placements.some(item => item.layoutMode === "grid-fallback");
     const parts = [];
-    if (Number.isFinite(projection.stress)) parts.push(`Stress ${projection.stress.toFixed(3)}`);
-    if (projection.warning) parts.push("projection warning");
-    if (fallback) parts.push("grid fallback distorts distances");
-    status.textContent = parts.join(" · "); status.classList.toggle("warning", Boolean(projection.warning || fallback));
+    if (Number.isFinite(layoutStress)) parts.push(`Layout stress ${layoutStress.toFixed(3)}`);
+    if (Number.isFinite(projection.raw_stress ?? projection.stress)) parts.push(`raw MDS ${(projection.raw_stress ?? projection.stress).toFixed(3)}`);
+    parts.push("projected approximation among siblings");
+    if (fallback) parts.push("grid fallback: semantic distances distorted");
+    status.textContent = parts.join(" · "); status.classList.toggle("warning", Boolean(layoutStress > .10 || fallback));
   }
   function renderBreadcrumbs() {
     crumbs.replaceChildren();
@@ -68,7 +70,14 @@ export function startAtlas(doc = document, win = window) {
   }
   function renderAll(reflow = true) {
     if (!state || destroyed) return;
-    if (reflow) { const size = bounds(); placements = fitTerritories(state.payload.children, size.width, size.height); resetView(); }
+    if (reflow) {
+      const size = bounds(); placements = fitTerritories(state.payload.children, size.width, size.height);
+      const matrix = state.payload.projection?.distances;
+      layoutStress = Array.isArray(matrix) && matrix.length === placements.length
+        ? displayStress(matrix, placements)
+        : (state.payload.projection?.raw_stress ?? state.payload.projection?.stress ?? 0);
+      resetView();
+    }
     renderMap(svg, placements, state, {
       select(node) { state = selectNode(state, node.prefix); renderAll(false); },
       enter(node) { if (node.has_children) load(prefixKey(node.prefix)); },
@@ -84,9 +93,12 @@ export function startAtlas(doc = document, win = window) {
     if (destroyed) return;
     currentPrefix = prefix; const request = guard.next(); loading.hidden = false; error.hidden = true;
     try {
-      const payload = !force && cache.has(prefix) ? cache.get(prefix) : await fetchAtlas(prefix, { signal: request.signal });
+      const cacheKey = datasetId ? `${datasetId}:${prefix}` : null;
+      const payload = !force && cacheKey && cache.has(cacheKey) ? cache.get(cacheKey) : await fetchAtlas(prefix, { signal: request.signal });
       if (!guard.isCurrent(request.id) || destroyed) return;
-      cache.set(prefix, payload); state = createState(payload); successful = true; renderAll();
+      if (payload.dataset_id && datasetId && payload.dataset_id !== datasetId) cache.clear();
+      datasetId = payload.dataset_id || datasetId;
+      cache.set(datasetId ? `${datasetId}:${prefix}` : prefix, payload); state = createState(payload); successful = true; renderAll();
     } catch (reason) {
       if (reason?.name === "AbortError" || !guard.isCurrent(request.id) || destroyed) return;
       error.querySelector("p").textContent = reason instanceof Error ? reason.message : "Unable to load atlas";

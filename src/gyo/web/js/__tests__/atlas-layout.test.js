@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fitTerritories } from "../atlas-layout.js";
+import { displayStress, fitTerritories } from "../atlas-layout.js";
 
 const node = (position, occupancy) => ({ position, occupancy });
 
@@ -87,5 +87,23 @@ describe("fitTerritories", () => {
       expect(Math.hypot(placed[i].cx - placed[j].cx, placed[i].cy - placed[j].cy) + 1e-35)
         .toBeGreaterThanOrEqual(placed[i].r + placed[j].r);
     }
+  });
+});
+
+describe("displayStress", () => {
+  const placements = [[0, 0], [3, 0], [0, 4]].map(([cx, cy]) => ({ cx, cy }));
+  const distances = [[0, 3, 4], [3, 0, 5], [4, 5, 0]];
+  it("is zero for exact and globally scaled geometry", () => {
+    expect(displayStress(distances, placements)).toBeCloseTo(0, 12);
+    expect(displayStress(distances, placements.map(p => ({ cx: p.cx * 7, cy: p.cy * 7 })))).toBeCloseTo(0, 12);
+  });
+  it("reports distorted geometry and handles degenerate counts", () => {
+    expect(displayStress(distances, [{ cx: 0, cy: 0 }, { cx: 1, cy: 0 }, { cx: 2, cy: 0 }])).toBeGreaterThan(.1);
+    expect(displayStress([], [])).toBe(0);
+    expect(displayStress([[0]], [{ cx: 1, cy: 2 }])).toBe(0);
+  });
+  it("rejects malformed values", () => {
+    expect(() => displayStress([[0, 1]], placements)).toThrow(/square/);
+    expect(() => displayStress([[0, NaN], [NaN, 0]], placements.slice(0, 2))).toThrow(/finite/);
   });
 });

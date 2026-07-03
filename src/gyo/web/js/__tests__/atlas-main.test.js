@@ -5,7 +5,8 @@ import { createRequestGuard, startAtlas, zoomView } from "../main.js";
 const payload = (prefix = [], children = []) => ({
   focus: { prefix, occupancy: 10, samples: { representative: [], outliers: [] } },
   children,
-  projection: { stress: .125, warning: true },
+  dataset_id: "dataset-a",
+  projection: { raw_stress: .125, stress: .125 },
 });
 const child = { prefix: [1], occupancy: 4, position: [0, 0], has_children: true, samples: { representative: [], outliers: [] } };
 
@@ -54,7 +55,8 @@ describe("atlas orchestration", () => {
     const many = Array.from({ length: 65 }, (_, i) => ({ ...child, prefix: [i], position: [0, 0] }));
     vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true, json: async () => payload([], many) });
     vi.useFakeTimers(); const app = startAtlas(); await vi.runAllTimersAsync();
-    expect(document.getElementById("projectionStatus").textContent).toMatch(/Stress 0.125.*projection warning.*grid fallback/);
+    expect(document.getElementById("projectionStatus").textContent).toMatch(/Layout stress 0.125.*raw MDS 0.125.*projected approximation among siblings.*semantic distances distorted/);
+    expect(document.getElementById("projectionStatus").classList.contains("warning")).toBe(true);
     svg.setAttribute("viewBox", "1 2 3 4"); window.dispatchEvent(new Event("resize")); await vi.runAllTimersAsync();
     expect(svg.getAttribute("viewBox")).toBe("0 0 800 600");
     app.destroy(); vi.useRealTimers();

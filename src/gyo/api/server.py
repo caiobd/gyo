@@ -1,7 +1,10 @@
 from pathlib import Path
+import hashlib
 import json
 import mimetypes
+import os
 import re
+import tempfile
 
 import numpy as np
 from fastapi import FastAPI, HTTPException
@@ -21,6 +24,32 @@ from gyo.tree.build import build_tree, node_at
 from gyo.tree.signals import node_stats, dead_codeword_counts
 
 WEB = Path(__file__).resolve().parent.parent / "web"
+ATLAS_LAYOUT_VERSION = "metric-mds-v1:euclidean"
+
+
+def _dataset_files(data_dir):
+    root = Path(data_dir)
+    codebooks = root / "codebooks" / "v1"
+    return [
+        root / "codes.parquet",
+        root / "embeddings.npy",
+        *sorted(codebooks.glob("*.npy")),
+        codebooks / "config.json",
+    ]
+
+
+def _dataset_fingerprint(data_dir):
+    """Hash all geometry-bearing inputs and the layout algorithm contract."""
+    digest = hashlib.sha256(ATLAS_LAYOUT_VERSION.encode())
+    for path in _dataset_files(data_dir):
+        digest.update(str(path.relative_to(data_dir)).encode())
+        try:
+            with path.open("rb") as stream:
+                while chunk := stream.read(1024 * 1024):
+                    digest.update(chunk)
+        except OSError as exc:
+            raise HTTPException(409, f"required Atlas input missing: {path.name}") from exc
+    return digest.hexdigest()
 
 
 def _level_columns(columns):
@@ -77,6 +106,76 @@ def create_app(data_dir: str) -> FastAPI:
     data_cache = None
     identity_cache = None
     atlas_cache = None
+    dataset_cache = None
+    fingerprint_stats = None
+    geometry_cache = {}
+
+    def _fingerprint():
+        nonlocal dataset_cache, fingerprint_stats
+        files = _dataset_files(data_dir)
+        try:
+            stats = tuple(
+                (str(path), stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+                for path in files
+                for stat in (path.stat(),)
+            )
+        except OSError:
+            return _dataset_fingerprint(data_dir)
+        if fingerprint_stats != stats:
+            dataset_cache = _dataset_fingerprint(data_dir)
+            fingerprint_stats = stats
+        return dataset_cache
+
+    def _geometry_for(dataset_id):
+        nonlocal geometry_cache
+        if geometry_cache.get("dataset_id") == dataset_id:
+            return geometry_cache.setdefault("geometries", {})
+        path = data_dir / "atlas" / "v1" / "geometry.json"
+        try:
+            loaded = json.loads(path.read_text())
+            if (
+                loaded.get("dataset_id") == dataset_id
+                and loaded.get("version") == 1
+                and isinstance(loaded.get("geometries"), dict)
+            ):
+                geometry_cache = loaded
+            else:
+                geometry_cache = {"dataset_id": dataset_id, "version": 1, "geometries": {}}
+        except (OSError, UnicodeError, json.JSONDecodeError, AttributeError):
+            geometry_cache = {"dataset_id": dataset_id, "version": 1, "geometries": {}}
+        return geometry_cache["geometries"]
+
+    def _persist_geometry():
+        path = data_dir / "atlas" / "v1" / "geometry.json"
+        temporary = None
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                "w",
+                dir=path.parent,
+                prefix=".geometry-",
+                suffix=".tmp",
+                delete=False,
+            ) as stream:
+                temporary = Path(stream.name)
+                json.dump(geometry_cache, stream, separators=(",", ":"), allow_nan=False)
+                stream.flush()
+                os.fsync(stream.fileno())
+            temporary.replace(path)
+        except (OSError, TypeError, ValueError):
+            if temporary is not None:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+    def _ensure_dataset():
+        nonlocal data_cache, identity_cache, atlas_cache, geometry_cache
+        dataset_id = _fingerprint()
+        if atlas_cache is not None and atlas_cache[-1] != dataset_id:
+            data_cache = identity_cache = atlas_cache = None
+            geometry_cache = {}
+        return dataset_id
 
     def _load():
         nonlocal data_cache, identity_cache
@@ -230,6 +329,7 @@ def create_app(data_dir: str) -> FastAPI:
             meta_by_id,
             stats_by_prefix,
             {},
+            _fingerprint(),
         )
         return atlas_cache
 
@@ -331,6 +431,7 @@ def create_app(data_dir: str) -> FastAPI:
 
     @app.get("/api/atlas/{prefix}")
     def atlas(prefix: str):
+        dataset_id = _ensure_dataset()
         if prefix == "root":
             pfx = ()
         else:
@@ -351,6 +452,7 @@ def create_app(data_dir: str) -> FastAPI:
             meta_by_id,
             stats_by_prefix,
             samples_by_prefix,
+            _cached_dataset_id,
         ) = _load_atlas()
         codebooks = rq.codebooks
         target = node_at(root, pfx)
@@ -398,10 +500,26 @@ def create_app(data_dir: str) -> FastAPI:
         child_nodes = list(target.children.values())
         child_prefixes = [child.prefix for child in child_nodes]
         distances = sibling_distance_matrix(child_prefixes, codebooks)
-        projection = metric_mds(distances)
+        geometries = _geometry_for(dataset_id)
+        geometry_key = "root" if not pfx else ",".join(map(str, pfx))
+        saved = geometries.get(geometry_key)
+        try:
+            positions = np.asarray(saved["positions"], dtype=np.float64)
+            raw_stress = float(saved["raw_stress"])
+            if (
+                positions.shape != (len(child_nodes), 2)
+                or not np.isfinite(positions).all()
+                or not np.isfinite(raw_stress)
+            ):
+                raise ValueError
+        except (TypeError, KeyError, ValueError, OverflowError):
+            projection = metric_mds(distances)
+            positions, raw_stress = projection.positions, projection.stress
+            geometries[geometry_key] = {"positions": positions.tolist(), "raw_stress": raw_stress}
+            _persist_geometry()
         parent_vector = prefix_vector(pfx, codebooks)
         children = []
-        for child, position in zip(child_nodes, projection.positions):
+        for child, position in zip(child_nodes, positions):
             child_vector = prefix_vector(child.prefix, codebooks)
             token = codebooks[child.level - 1][child.prefix[-1]]
             payload = node_payload(child)
@@ -416,13 +534,16 @@ def create_app(data_dir: str) -> FastAPI:
             children.append(payload)
 
         return {
+            "dataset_id": dataset_id,
+            "num_levels": rq.num_levels,
             "focus": node_payload(target),
             "children": children,
             "projection": {
                 "method": "metric-mds",
                 "metric": "euclidean",
-                "stress": projection.stress,
-                "warning": projection.stress > 0.10,
+                "raw_stress": raw_stress,
+                "stress": raw_stress,
+                "distances": distances.tolist(),
             },
         }
 

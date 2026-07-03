@@ -1,5 +1,30 @@
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
+export function displayStress(distanceMatrix, placements) {
+  if (!Array.isArray(distanceMatrix) || !Array.isArray(placements)) throw new TypeError("distances and placements must be arrays");
+  const count = distanceMatrix.length;
+  if (distanceMatrix.some(row => !Array.isArray(row) || row.length !== count) || placements.length !== count) {
+    throw new RangeError("distance matrix must be square and aligned with placements");
+  }
+  if (count <= 1) return 0;
+  const target = [], displayed = [];
+  for (let i = 0; i < count; i++) {
+    const point = placements[i];
+    if (!point || !Number.isFinite(point.cx) || !Number.isFinite(point.cy)) throw new TypeError("placements must have finite centers");
+    for (let j = i + 1; j < count; j++) {
+      const distance = distanceMatrix[i][j];
+      if (!Number.isFinite(distance) || distance < 0 || !Number.isFinite(distanceMatrix[j][i])) throw new TypeError("distances must be finite and non-negative");
+      target.push(distance);
+      displayed.push(Math.hypot(point.cx - placements[j].cx, point.cy - placements[j].cy));
+    }
+  }
+  const denominator = target.reduce((sum, value) => sum + value * value, 0);
+  if (!denominator) return 0;
+  const fittedNorm = displayed.reduce((sum, value) => sum + value * value, 0);
+  const scale = fittedNorm ? target.reduce((sum, value, index) => sum + value * displayed[index], 0) / fittedNorm : 0;
+  return Math.sqrt(target.reduce((sum, value, index) => sum + (value - scale * displayed[index]) ** 2, 0) / denominator);
+}
+
 function validate(nodes, width, height) {
   if (!Array.isArray(nodes)) throw new TypeError("nodes must be an array");
   if (!Number.isFinite(width) || width <= 0 || !Number.isFinite(height) || height <= 0) {
