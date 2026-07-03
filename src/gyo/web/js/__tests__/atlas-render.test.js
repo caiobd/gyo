@@ -40,13 +40,16 @@ describe("semantic atlas renderer", () => {
     expect(svg.querySelector(".focus-boundary")).not.toBeNull();
     expect(svg.querySelector(".focus-anchor")?.textContent).toContain("Group 4");
     expect(svg.querySelectorAll(".hierarchy-link")).toHaveLength(1);
+    expect(svg.querySelector('.children-group[role="group"]')?.getAttribute("aria-label")).toContain("Group 4");
+    expect(svg.querySelectorAll('.focus-boundary[aria-hidden="true"], .focus-anchor[aria-hidden="true"], .hierarchy-links[aria-hidden="true"]')).toHaveLength(3);
+    expect(svg.querySelector(".focus-boundary")?.dataset.prefix).toBe("4");
+    expect(svg.querySelector(".territory")?.getAttribute("aria-level")).toBe("2");
     const territory = svg.querySelector(".territory");
     territory.dispatchEvent(new Event("pointerenter"));
     expect(territory.classList.contains("is-path")).toBe(true);
     expect(svg.querySelector(".focus-anchor").classList.contains("is-path")).toBe(true);
     expect(path).toHaveBeenLastCalledWith(node.prefix);
-    territory.dispatchEvent(new Event("pointerleave")); expect(path).toHaveBeenLastCalledWith(null);
-    territory.dispatchEvent(new FocusEvent("focus")); expect(path).toHaveBeenLastCalledWith(node.prefix);
+    territory.dispatchEvent(new FocusEvent("focus")); territory.dispatchEvent(new Event("pointerleave")); expect(path).toHaveBeenLastCalledWith(node.prefix);
     territory.dispatchEvent(new FocusEvent("blur")); expect(path).toHaveBeenLastCalledWith(null);
     renderMap(svg, [], { selected: null, focus: [4] }, { width: 240, height: 180 });
     expect(svg.textContent).toContain("No child groups at this level");
@@ -56,7 +59,9 @@ describe("semantic atlas renderer", () => {
   it("expands aggregate buttons without selecting or entering", () => {
     const svg = document.createElementNS(SVG, "svg"); const handlers = { expand: vi.fn(), select: vi.fn(), enter: vi.fn() };
     renderMap(svg, [{ aggregate: true, label: "+2 groups", count: 2, occupancy: 3, position: [0, 0], cx: 100, cy: 90, r: 20 }], { selected: null, focus: [] }, handlers);
-    const button = svg.querySelector('[role="button"]');
+    const button = svg.querySelector('.aggregate[role="treeitem"]');
+    expect(button.getAttribute("aria-expanded")).toBe("false");
+    expect(button.getAttribute("aria-label")).toBe("2 more groups, expand");
     button.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true })); button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(handlers.expand).toHaveBeenCalledTimes(2); expect(handlers.select).not.toHaveBeenCalled(); expect(handlers.enter).not.toHaveBeenCalled();
   });

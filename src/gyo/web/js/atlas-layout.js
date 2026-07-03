@@ -1,8 +1,13 @@
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
 
+export function viewportCapacity(width, height, minReadableDiameter = 72) {
+  if (![width, height, minReadableDiameter].every(Number.isFinite) || minReadableDiameter <= 0) return 1;
+  return Math.max(1, Math.min(63, Math.floor(Math.max(0, width) / minReadableDiameter) * Math.floor(Math.max(0, height) / minReadableDiameter)));
+}
+
 export function aggregateDenseChildren(children, maxVisible = 63, expanded = false) {
   if (!Array.isArray(children)) throw new TypeError("children must be an array");
-  if (expanded || children.length <= maxVisible + 1) return children;
+  if (expanded || children.length <= maxVisible) return children;
   const ranked = children.map((node, index) => ({ node, index })).sort((a, b) =>
     b.node.occupancy - a.node.occupancy || a.index - b.index);
   const kept = ranked.slice(0, maxVisible).sort((a, b) => a.index - b.index).map(item => item.node);

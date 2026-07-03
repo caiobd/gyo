@@ -8,7 +8,7 @@
   <header class="topbar"><a class="brand" href="#" aria-label="Open atlas root">gyo <span>Semantic Atlas</span></a><nav id="breadcrumbs" aria-label="Atlas path"></nav><output id="projectionStatus" class="projection-status"></output></header>
   <main class="workspace">
     <section class="map-panel" aria-label="Semantic map">
-      <div class="map-toolbar"><button id="backBtn" type="button">Back</button><button id="resetViewBtn" type="button">Reset view</button><label for="levelControl">Compare level</label><select id="levelControl" aria-label="Comparison level"></select><button id="collapseDenseBtn" type="button" hidden>Collapse small groups</button></div>
+      <div class="map-toolbar"><button id="backBtn" type="button">Back</button><button id="resetViewBtn" type="button">Reset view</button><label for="levelControl">Compare level</label><select id="levelControl" aria-describedby="levelHelp" aria-label="Comparison level"></select><span id="levelHelp">Choose an earlier stage to compare its groups.</span><button id="collapseDenseBtn" type="button" hidden>Collapse small groups</button></div>
       <div id="mapLoading" class="map-state loading" hidden role="status"><span></span>Mapping territories…</div>
       <svg id="atlas" role="tree" aria-label="Semantic territories" preserveAspectRatio="xMidYMid meet"></svg>
       <div id="mapError" class="map-state map-error" hidden role="alert"><p></p><button id="retryBtn" type="button">Retry</button></div>

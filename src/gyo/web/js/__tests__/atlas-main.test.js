@@ -68,8 +68,8 @@ describe("atlas orchestration", () => {
     const many = Array.from({ length: 65 }, (_, i) => ({ ...child, prefix: [i], position: [0, 0] }));
     vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true, json: async () => payload([], many) });
     vi.useFakeTimers(); const app = startAtlas(); await vi.runAllTimersAsync();
-    expect(document.getElementById("projectionStatus").textContent).toMatch(/stress unavailable while small groups are aggregated/);
-    expect(document.getElementById("projectionStatus").classList.contains("warning")).toBe(true);
+    expect(document.getElementById("projectionStatus").textContent).toMatch(/Raw MDS stress 0.125.*layout stress unavailable while \d+ groups aggregated/);
+    expect(document.getElementById("projectionStatus").classList.contains("warning")).toBe(false);
     svg.setAttribute("viewBox", "1 2 3 4"); window.dispatchEvent(new Event("resize")); await vi.runAllTimersAsync();
     expect(svg.getAttribute("viewBox")).toBe("0 0 800 600");
     app.destroy(); vi.useRealTimers();
@@ -79,10 +79,24 @@ describe("atlas orchestration", () => {
     const svg = shell(); const many = Array.from({ length: 65 }, (_, i) => ({ ...child, prefix: [i], occupancy: i + 1, position: [0, 0] }));
     const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true, json: async () => ({ ...payload([], many), num_levels: 3 }) });
     vi.useFakeTimers(); const app = startAtlas(); await vi.runAllTimersAsync();
-    expect(svg.querySelectorAll(".territory")).toHaveLength(64);
+    expect(svg.querySelectorAll(".territory").length).toBeLessThan(65);
+    const firstCount = svg.querySelectorAll(".territory").length;
     svg.querySelector(".territory.aggregate").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
-    expect(svg.querySelectorAll(".territory")).toHaveLength(65); expect(fetch).toHaveBeenCalledTimes(2);
-    document.getElementById("collapseDenseBtn").click(); expect(svg.querySelectorAll(".territory")).toHaveLength(64);
+    expect(svg.querySelectorAll(".territory").length).toBeGreaterThan(firstCount); expect(fetch).toHaveBeenCalledTimes(2);
+    document.getElementById("collapseDenseBtn").click(); expect(svg.querySelectorAll(".territory")).toHaveLength(firstCount);
+    app.destroy(); vi.useRealTimers();
+  });
+
+  it("uses viewport capacity and progressively reveals another page on zoom", async () => {
+    const svg = shell(); svg.getBoundingClientRect = () => ({ width: 360, height: 240, left: 0, top: 0 });
+    const many = Array.from({ length: 40 }, (_, i) => ({ ...child, prefix: [i], occupancy: i + 1, position: [0, 0] }));
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true, json: async () => ({ ...payload([], many), num_levels: 2 }) });
+    vi.useFakeTimers(); const app = startAtlas(); await vi.runAllTimersAsync();
+    const initial = svg.querySelectorAll(".territory").length; expect(initial).toBeLessThan(40);
+    const wheel = () => svg.dispatchEvent(new WheelEvent("wheel", { deltaY: -1, clientX: 180, clientY: 120, bubbles: true, cancelable: true }));
+    wheel(); wheel();
+    expect(svg.querySelectorAll(".territory").length).toBeGreaterThan(initial);
+    expect(document.getElementById("projectionStatus").textContent).toMatch(/groups aggregated/);
     app.destroy(); vi.useRealTimers();
   });
 
@@ -90,7 +104,9 @@ describe("atlas orchestration", () => {
     shell(); const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async url => ({ ok: true, json: async () => ({ ...payload(url.endsWith("1.2") ? [1, 2] : [1], []), num_levels: 4 }) }));
     const app = startAtlas(); await flush(); await app.load("1.2"); await flush();
     const control = document.getElementById("levelControl");
-    expect([...control.options].map(option => option.value)).toEqual(["1", "2", "3"]);
+    expect([...control.options].map(option => option.value)).toEqual(["1", "2", "3", "4"]);
+    expect([...control.options].map(option => option.disabled)).toEqual([false, false, false, true]);
+    expect(control.options[3].textContent).toContain("select a group at level 3 first");
     control.value = "2"; control.dispatchEvent(new Event("change", { bubbles: true })); await flush();
     expect(fetch.mock.calls.some(([url]) => url === "/api/atlas/1")).toBe(true); expect(document.getElementById("backBtn").disabled).toBe(false);
     app.destroy();

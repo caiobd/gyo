@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { aggregateDenseChildren, displayStress, fitTerritories } from "../atlas-layout.js";
+import { aggregateDenseChildren, displayStress, fitTerritories, viewportCapacity } from "../atlas-layout.js";
 
 const node = (position, occupancy) => ({ position, occupancy });
 
@@ -20,6 +20,12 @@ describe("fitTerritories", () => {
     const visible = aggregateDenseChildren(children);
     expect(visible.reduce((sum, item) => sum + item.occupancy, 0)).toBe(children.reduce((sum, item) => sum + item.occupancy, 0));
     expect(visible.at(-1).count).toBe(193);
+  });
+
+  it("derives a pure readable capacity capped at 63", () => {
+    expect(viewportCapacity(320, 240, 80)).toBe(12);
+    expect(viewportCapacity(4000, 3000, 40)).toBe(63);
+    expect(viewportCapacity(0, 300)).toBe(1);
   });
   it("returns an empty layout for no nodes", () => {
     expect(fitTerritories([], 640, 480)).toEqual([]);
