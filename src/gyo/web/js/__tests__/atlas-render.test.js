@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { renderInspector, renderMap, residualColor } from "../atlas-render.js";
+import { renderInspector, renderMap, residualBand, residualColor } from "../atlas-render.js";
 
 const SVG = "http://www.w3.org/2000/svg";
 const hostile = `<img src=x onerror="globalThis.pwned=true">`;
@@ -12,13 +12,32 @@ const node = {
 };
 
 describe("semantic atlas renderer", () => {
-  it("maps normalized residuals to a clamped accessible traffic-light scale", () => {
-    expect(residualColor(0)).toBe("#4f9d69");
-    expect(residualColor(1)).toBe("#d85b57");
+  it("maps normalized residuals to a clamped colorblind-safe sequential scale", () => {
+    expect(residualColor(0)).toBe("#315a9b");
+    expect(residualColor(1)).toBe("#e5c84b");
     expect(residualColor(-2)).toBe(residualColor(0));
     expect(residualColor(4)).toBe(residualColor(1));
     expect(residualColor(null)).toBeNull();
     expect(residualColor(Number.NaN)).toBeNull();
+  });
+
+  it("adds redundant residual bands, patterns, and accessible labels", () => {
+    const svg = document.createElementNS(SVG, "svg");
+    renderMap(svg, [{ ...node, cx: 100, cy: 90, r: 70 }], { selected: null }, {});
+    const territory = svg.querySelector(".territory");
+    expect(residualBand(.1)).toBe("low"); expect(residualBand(.5)).toBe("mid"); expect(residualBand(.9)).toBe("high");
+    expect(territory.dataset.residualBand).toBe("low");
+    expect(territory.getAttribute("aria-label")).toContain("normalized residual 0.250, low");
+    expect(territory.querySelector("circle:not(.selection-ring)").style.stroke).toBe(residualColor(.25));
+  });
+
+  it("keeps projection guidance in empty and populated inspector states", () => {
+    const container = document.createElement("aside");
+    renderInspector(container, null, "representative");
+    expect(container.querySelector(".projection-help")?.textContent).toContain("among siblings");
+    renderInspector(container, node, "representative");
+    expect(container.querySelectorAll(".projection-help")).toHaveLength(1);
+    expect(container.querySelector(".projection-help")?.textContent).toContain("layout stress includes display fitting");
   });
 
   it("shows complete analytics, explicit token identity, and parent semantics", () => {

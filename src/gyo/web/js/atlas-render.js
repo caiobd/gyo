@@ -10,10 +10,16 @@ const renderSessions = new WeakMap();
 export function residualColor(value) {
   if (value === null || value === undefined || !Number.isFinite(value)) return null;
   const t = Math.max(0, Math.min(1, value));
-  const stops = [[79, 157, 105], [214, 180, 72], [216, 91, 87]];
+  const stops = [[49, 90, 155], [58, 166, 160], [229, 200, 75]];
   const segment = t <= .5 ? 0 : 1, amount = segment ? (t - .5) * 2 : t * 2;
   const rgb = stops[segment].map((channel, index) => Math.round(channel + (stops[segment + 1][index] - channel) * amount));
   return `#${rgb.map(channel => channel.toString(16).padStart(2, "0")).join("")}`;
+}
+
+export function residualBand(value) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return null;
+  const t = Math.max(0, Math.min(1, value));
+  return t < 1 / 3 ? "low" : t < 2 / 3 ? "mid" : "high";
 }
 
 export function cancelMapInteractions(svg) {
@@ -69,6 +75,8 @@ export function renderMap(svg, placements, state, handlers = {}) {
     group.classList.add("territory");
     if (node.aggregate) group.classList.add("aggregate");
     group.dataset.prefix = node.aggregate ? "aggregate" : prefixKey(node.prefix);
+    const band = residualBand(node.residual_norm);
+    if (band) group.dataset.residualBand = band;
     if (samePrefix(state.selected, node.prefix)) group.classList.add("selected");
     group.setAttribute("role", "treeitem");
     group.setAttribute("aria-level", String((state.focus?.length || 0) + 1)); group.setAttribute("aria-posinset", String(index + 1)); group.setAttribute("aria-setsize", String(placements.length));
@@ -77,7 +85,8 @@ export function renderMap(svg, placements, state, handlers = {}) {
     const disabledAggregate = Boolean(node.aggregate && node.revealable === false);
     if (disabledAggregate) { group.setAttribute("aria-disabled", "true"); group.setAttribute("tabindex", "-1"); }
     group.setAttribute("aria-selected", String(samePrefix(state.selected, node.prefix)));
-    group.setAttribute("aria-label", node.aggregate ? (node.revealable === false ? `${node.count} groups hidden — enter a branch or collapse` : `${node.count} more groups, Reveal more groups`) : `${prefixName(node.prefix)}, ${node.occupancy} items`);
+    const residualLabel = band ? `, normalized residual ${node.residual_norm.toFixed(3)}, ${band}` : "";
+    group.setAttribute("aria-label", node.aggregate ? (node.revealable === false ? `${node.count} groups hidden — enter a branch or collapse` : `${node.count} more groups, Reveal more groups`) : `${prefixName(node.prefix)}, ${node.occupancy} items${residualLabel}`);
     const circle = svgEl("circle");
     circle.setAttribute("cx", node.cx); circle.setAttribute("cy", node.cy); circle.setAttribute("r", node.r);
     const residualStroke = residualColor(node.residual_norm);
@@ -183,6 +192,9 @@ function sampleGrid(parent, samples) {
 
 export function renderInspector(container, node, mode, handlers = {}) {
   container.replaceChildren();
+  const help = document.createElement("p"); help.className = "projection-help";
+  help.textContent = "Positions approximate Euclidean distance between reconstructed semantic IDs among siblings. Containment and paths are exact. Raw stress describes the MDS projection; layout stress includes display fitting.";
+  container.appendChild(help);
   if (!node) { text(container, "Select a territory to inspect it.", "inspector-empty"); return; }
   const token = node.prefix?.length ? `c${node.prefix.at(-1)}` : null;
   const heading = document.createElement("h2"); heading.textContent = token ? `Level ${node.prefix.length} · token ${token}` : "Root group"; container.appendChild(heading);

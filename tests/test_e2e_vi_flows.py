@@ -151,7 +151,8 @@ async def flow_boot(page: Page, base: str) -> None:
     projection = await page.locator("#projectionStatus").inner_text()
     assert "Layout stress" in projection and "sibling reconstructions" in projection
     assert "containment and paths exact" in projection and "raw is projection" in projection
-    assert await page.locator(".residual-legend").inner_text() == "Residual low\nhigh"
+    legend = await page.locator(".residual-legend").inner_text()
+    assert "Residual low (solid/thin)" in legend and "high (short dash/thick)" in legend
     assert await page.locator("#mapError").is_hidden()
 
 
@@ -180,6 +181,7 @@ async def flow_selection_and_samples(page: Page, base: str) -> None:
     await boot(page, base)
     await select_internal(page)
     text = await page.locator("#inspector").inner_text()
+    assert "among siblings" in text and "layout stress includes display fitting" in text
     assert "Mean residual" in text and "Normalized residual" in text
     assert "Purity" in text and "Occupancy" in text
     assert "Parent distance / displacement" in text and "Token norm" in text
