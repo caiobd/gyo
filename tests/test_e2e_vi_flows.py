@@ -426,20 +426,38 @@ async def flow_accessibility_audit(page: Page, base: str) -> None:
         assert inspector_box and inspector_box["width"] > 80 and inspector_box["height"] > 80
         assert preview_box and preview_box["width"] > 20 and preview_box["height"] > 20
 
+        async def tab_to_retry(scope, limit=80):
+            sequence = []
+            for _ in range(limit):
+                await page.keyboard.press("Tab")
+                active = await page.evaluate("""() => { const e = document.activeElement; return { role: e.getAttribute('role') || (e.tagName === 'BUTTON' ? 'button' : null), name: e.getAttribute('aria-label') || e.textContent.trim(), scope: e.closest('#inspector') ? 'inspector' : e.closest('#atlas') ? 'preview' : 'other' }; }""")
+                sequence.append(active)
+                if active["role"] == "button" and active["scope"] == scope and active["name"].startswith("Retry"):
+                    return active, sequence
+            raise AssertionError(f"Tab did not reach {scope} retry: {sequence}")
+
+        await page.locator(".brand").focus()
+        preview_tab, preview_sequence = await tab_to_retry("preview")
+        inspector_tab, inspector_sequence = await tab_to_retry("inspector")
+        assert preview_tab["role"] == "button" and preview_tab["name"].startswith("Retry sample"), preview_sequence
+        assert inspector_tab == {"role": "button", "name": "Retry", "scope": "inspector"}, inspector_sequence
+
         await page.unroute("**/thumb/*", fail_thumbnail)
-        preview_handle = await preview_retry.element_handle()
-        await preview_retry.focus()
-        async with page.expect_response(lambda response: "/thumb/" in response.url and response.status == 200):
-            await page.keyboard.press("Enter")
-        await page.wait_for_function("element => !element.isConnected", arg=preview_handle, timeout=TIMEOUT)
-        assert await page.locator('#atlas image[visibility="visible"]').count() > 0
-        await inspector_retry.focus()
         async with page.expect_response(lambda response: "/thumb/" in response.url and response.status == 200):
             await page.keyboard.press("Space")
         inspector_image = page.locator("#inspector .sample-grid img").first
         await page.wait_for_function("""() => { const image = document.querySelector('#inspector .sample-grid img'); return image?.complete && image.naturalWidth > 0; }""")
         image_box = await inspector_image.bounding_box()
         assert image_box and image_box["width"] > 80 and image_box["height"] > 80
+
+        await page.locator(".brand").focus()
+        preview_tab, preview_sequence = await tab_to_retry("preview")
+        assert preview_tab["name"].startswith("Retry sample"), preview_sequence
+        preview_handle = await page.evaluate_handle("document.activeElement")
+        async with page.expect_response(lambda response: "/thumb/" in response.url and response.status == 200):
+            await page.keyboard.press("Enter")
+        await page.wait_for_function("element => !element.isConnected", arg=preview_handle, timeout=TIMEOUT)
+        assert await page.locator('#atlas image[visibility="visible"]').count() > 0
 
         outliers = page.get_by_role("button", name="Outliers", exact=True)
         await outliers.focus()
