@@ -97,6 +97,10 @@ describe("atlas orchestration", () => {
     wheel(); wheel();
     expect(svg.querySelectorAll(".territory").length).toBeGreaterThan(initial);
     expect(document.getElementById("projectionStatus").textContent).toMatch(/groups aggregated/);
+    document.getElementById("collapseDenseBtn").click();
+    expect(svg.querySelectorAll(".territory")).toHaveLength(initial);
+    expect(svg.getAttribute("viewBox")).toBe("0 0 360 240");
+    expect(document.getElementById("collapseDenseBtn").getAttribute("aria-pressed")).toBe("false");
     app.destroy(); vi.useRealTimers();
   });
 
@@ -113,7 +117,10 @@ describe("atlas orchestration", () => {
     for (let i = 0; i < 10; i++) aggregate()?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     expect(svg.querySelectorAll(".territory:not(.aggregate)").length).toBeLessThanOrEqual(MAX_RENDERED_TERRITORIES);
     expect(aggregate()).not.toBeNull(); expect(aggregate().getAttribute("aria-expanded")).toBe("false");
+    expect(aggregate().getAttribute("aria-disabled")).toBe("true");
     expect(aggregate().getAttribute("aria-label")).toContain("enter a branch or collapse");
+    const cappedCount = svg.querySelectorAll(".territory").length; aggregate().dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(svg.querySelectorAll(".territory")).toHaveLength(cappedCount);
     expect(svg.getAttribute("viewBox")).toBe(zoomed);
     app.destroy(); vi.useRealTimers();
   });

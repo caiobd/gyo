@@ -66,6 +66,17 @@ describe("semantic atlas renderer", () => {
     expect(handlers.expand).toHaveBeenCalledTimes(2); expect(handlers.select).not.toHaveBeenCalled(); expect(handlers.enter).not.toHaveBeenCalled();
   });
 
+  it("makes a hard-cap aggregate disabled, untabbable, and inert", () => {
+    const svg = document.createElementNS(SVG, "svg"); const expand = vi.fn();
+    renderMap(svg, [{ aggregate: true, revealable: false, count: 160, occupancy: 300, position: [0, 0], cx: 100, cy: 90, r: 20 }], { selected: null, focus: [] }, { expand });
+    const aggregate = svg.querySelector(".aggregate");
+    expect(aggregate.getAttribute("aria-disabled")).toBe("true"); expect(aggregate.getAttribute("tabindex")).toBe("-1");
+    aggregate.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    aggregate.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    aggregate.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true }));
+    expect(expand).not.toHaveBeenCalled();
+  });
+
   it("renders inspector text without injection and omits unavailable metrics", () => {
     const container = document.createElement("aside");
     renderInspector(container, { ...node, purity: null, mean_residual: undefined }, "representative", {});

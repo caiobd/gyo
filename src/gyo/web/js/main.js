@@ -119,7 +119,8 @@ export function startAtlas(doc = document, win = window) {
     if (collapseDense) {
       const expanded = placements.filter(item => !item.aggregate).length > Math.min(pageCapacity, state.payload.children.length);
       collapseDense.hidden = !expanded; collapseDense.setAttribute("aria-pressed", String(expanded));
-      collapseDense.setAttribute("aria-label", expanded ? "Collapse expanded small groups" : "Small groups collapsed");
+      collapseDense.textContent = "Reset zoom and collapse groups";
+      collapseDense.setAttribute("aria-label", expanded ? "Reset zoom and collapse groups" : "Small groups collapsed");
     }
     showStatus();
   }
@@ -153,7 +154,7 @@ export function startAtlas(doc = document, win = window) {
   on(brand, "click", event => { event.preventDefault(); load("root"); });
   on(back, "click", () => state && load(prefixKey(parentPrefix(state.focus))));
   if (levelControl) on(levelControl, "change", () => state && load(prefixKey(state.focus.slice(0, Number(levelControl.value) - 1))));
-  if (collapseDense) on(collapseDense, "click", () => { requestedRevealScale = 1; renderAll(true, true); });
+  if (collapseDense) on(collapseDense, "click", () => { requestedRevealScale = 1; resetView(); renderAll(true, true); });
   on(doc.getElementById("resetViewBtn"), "click", () => { resetView(); renderAll(true, true); });
   on(win, "keydown", event => { if (event.key === "Escape" && state?.focus.length) load(prefixKey(parentPrefix(state.focus))); });
   on(win, "resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => renderAll(true), 100); });

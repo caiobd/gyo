@@ -65,6 +65,8 @@ export function renderMap(svg, placements, state, handlers = {}) {
     group.setAttribute("aria-level", String((state.focus?.length || 0) + 1)); group.setAttribute("aria-posinset", String(index + 1)); group.setAttribute("aria-setsize", String(placements.length));
     if (node.aggregate) group.setAttribute("aria-expanded", "false");
     group.setAttribute("tabindex", String(index === (selectedIndex < 0 ? 0 : selectedIndex) ? 0 : -1));
+    const disabledAggregate = Boolean(node.aggregate && node.revealable === false);
+    if (disabledAggregate) { group.setAttribute("aria-disabled", "true"); group.setAttribute("tabindex", "-1"); }
     group.setAttribute("aria-selected", String(samePrefix(state.selected, node.prefix)));
     group.setAttribute("aria-label", node.aggregate ? (node.revealable === false ? `${node.count} groups hidden — enter a branch or collapse` : `${node.count} more groups, Reveal more groups`) : `${prefixName(node.prefix)}, ${node.occupancy} items`);
     const circle = svgEl("circle");
@@ -114,13 +116,14 @@ export function renderMap(svg, placements, state, handlers = {}) {
     };
     group.addEventListener("pointerenter", () => setPath("hover", true)); group.addEventListener("pointerleave", () => setPath("hover", false));
     group.addEventListener("focus", () => setPath("focus", true)); group.addEventListener("blur", () => setPath("focus", false));
-    group.addEventListener("click", () => { if (node.aggregate) { handlers.expand?.(); return; } clearTimeout(session.clickTimer); session.clickTimer = setTimeout(() => { session.clickTimer = null; handlers.select?.(node); }, 180); });
-    group.addEventListener("dblclick", event => { if (!node.has_children) return; clearTimeout(session.clickTimer); session.clickTimer = null; event.preventDefault(); handlers.enter?.(node); });
+    group.addEventListener("click", () => { if (disabledAggregate) return; if (node.aggregate) { handlers.expand?.(); return; } clearTimeout(session.clickTimer); session.clickTimer = setTimeout(() => { session.clickTimer = null; handlers.select?.(node); }, 180); });
+    group.addEventListener("dblclick", event => { if (disabledAggregate || !node.has_children) return; clearTimeout(session.clickTimer); session.clickTimer = null; event.preventDefault(); handlers.enter?.(node); });
     group.addEventListener("keydown", event => {
+      if (disabledAggregate) return;
       if (node.aggregate && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); handlers.expand?.(); return; }
       if (event.key === "Enter") { event.preventDefault(); handlers.select?.(node); }
       if (event.key === " " && node.has_children) { event.preventDefault(); handlers.enter?.(node); }
-      const territories = [...svg.querySelectorAll('[role="treeitem"]')];
+      const territories = [...svg.querySelectorAll('[role="treeitem"]:not([aria-disabled="true"])')];
       const current = territories.indexOf(group);
       let target = null;
       if (event.key === "ArrowRight" || event.key === "ArrowDown") target = territories[(current + 1) % territories.length];
