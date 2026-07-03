@@ -141,7 +141,7 @@ async def flow_boot(page: Page, base: str) -> None:
     await boot(page, base)
     assert await page.locator("#atlas .territory").count() >= 3
     assert "gyo" in (await page.locator(".brand").inner_text()).lower()
-    assert "Stress" in await page.locator("#projectionStatus").inner_text()
+    assert "Layout stress" in await page.locator("#projectionStatus").inner_text()
     assert await page.locator("#mapError").is_hidden()
 
 
@@ -334,7 +334,11 @@ async def flow_accessibility_audit(page: Page, base: str) -> None:
     async def force_warning(route):
         response = await route.fetch()
         payload = await response.json()
-        payload["projection"] = {"stress": 0.777, "warning": True}
+        count = len(payload["children"])
+        distances = [[0.0 if i == j else 1.0 for j in range(count)] for i in range(count)]
+        if count > 1:
+            distances[0][1] = distances[1][0] = 1000.0
+        payload["projection"] = {"raw_stress": 0.777, "stress": 0.777, "distances": distances}
         await route.fulfill(response=response, json=payload)
 
     async def fail_thumbnail(route):
@@ -345,7 +349,8 @@ async def flow_accessibility_audit(page: Page, base: str) -> None:
     await boot(page, base)
     try:
         warning = page.locator("#projectionStatus")
-        assert "projection warning" in await warning.inner_text()
+        assert "Layout stress" in await warning.inner_text()
+        assert await warning.evaluate("element => element.classList.contains('warning')")
         assert await warning.evaluate("element => { const r = element.getBoundingClientRect(); return r.width > 0 && r.bottom > 0 && r.top < innerHeight; }")
 
         motion = await page.evaluate("""() => ['.territory', '.loading span', 'button'].map(selector => {

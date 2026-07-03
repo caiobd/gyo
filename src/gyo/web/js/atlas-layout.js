@@ -6,14 +6,24 @@ export function displayStress(distanceMatrix, placements) {
   if (distanceMatrix.some(row => !Array.isArray(row) || row.length !== count) || placements.length !== count) {
     throw new RangeError("distance matrix must be square and aligned with placements");
   }
+  for (let i = 0; i < count; i++) {
+    if (!Number.isFinite(distanceMatrix[i][i]) || Math.abs(distanceMatrix[i][i]) > 1e-12) {
+      throw new RangeError("distance matrix diagonal must be zero");
+    }
+    for (let j = 0; j < count; j++) {
+      const value = distanceMatrix[i][j];
+      if (!Number.isFinite(value) || value < 0) throw new TypeError("distances must be finite and non-negative");
+      if (Math.abs(value - distanceMatrix[j][i]) > 1e-12) throw new RangeError("distance matrix must be symmetric");
+    }
+    const point = placements[i];
+    if (!point || !Number.isFinite(point.cx) || !Number.isFinite(point.cy)) throw new TypeError("placements must have finite centers");
+  }
   if (count <= 1) return 0;
   const target = [], displayed = [];
   for (let i = 0; i < count; i++) {
     const point = placements[i];
-    if (!point || !Number.isFinite(point.cx) || !Number.isFinite(point.cy)) throw new TypeError("placements must have finite centers");
     for (let j = i + 1; j < count; j++) {
       const distance = distanceMatrix[i][j];
-      if (!Number.isFinite(distance) || distance < 0 || !Number.isFinite(distanceMatrix[j][i])) throw new TypeError("distances must be finite and non-negative");
       target.push(distance);
       displayed.push(Math.hypot(point.cx - placements[j].cx, point.cy - placements[j].cy));
     }

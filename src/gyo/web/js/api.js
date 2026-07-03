@@ -20,3 +20,9 @@ export async function fetchAtlas(prefix = "root", options) {
   try { detail = (await response.json())?.detail; } catch { /* non-JSON response */ }
   throw new Error(`${detail || response.statusText || "Atlas request failed"} (HTTP ${response.status})`);
 }
+
+export async function fetchDatasetId(options) {
+  const response = await fetch("/api/dataset", options);
+  if (!response.ok) throw new Error(`Dataset check failed (HTTP ${response.status})`);
+  return (await response.json()).dataset_id;
+}

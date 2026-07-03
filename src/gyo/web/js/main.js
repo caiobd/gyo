@@ -1,4 +1,4 @@
-import { fetchAtlas } from "./api.js";
+import { fetchAtlas, fetchDatasetId } from "./api.js";
 import { displayStress, fitTerritories } from "./atlas-layout.js";
 import { createState, parentPrefix, prefixKey, selectNode, setSampleMode } from "./atlas-model.js";
 import { cancelMapInteractions, renderInspector, renderMap } from "./atlas-render.js";
@@ -93,6 +93,9 @@ export function startAtlas(doc = document, win = window) {
     if (destroyed) return;
     currentPrefix = prefix; const request = guard.next(); loading.hidden = false; error.hidden = true;
     try {
+      const serverDatasetId = await fetchDatasetId({ signal: request.signal });
+      if (datasetId && serverDatasetId !== datasetId) cache.clear();
+      datasetId = serverDatasetId;
       const cacheKey = datasetId ? `${datasetId}:${prefix}` : null;
       const payload = !force && cacheKey && cache.has(cacheKey) ? cache.get(cacheKey) : await fetchAtlas(prefix, { signal: request.signal });
       if (!guard.isCurrent(request.id) || destroyed) return;

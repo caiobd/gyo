@@ -34,8 +34,21 @@ describe("atlas orchestration", () => {
     const app = startAtlas(); await flush();
     await app.load("1"); await flush();
     document.querySelector(".brand").dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })); await flush();
-    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(fetch).toHaveBeenCalledTimes(5);
     expect(document.getElementById("breadcrumbs").textContent).toContain("Root");
+    app.destroy();
+  });
+
+  it("revalidates dataset identity before using a cached prefix", async () => {
+    shell(); let dataset = "dataset-a";
+    const fetch = vi.spyOn(globalThis, "fetch").mockImplementation(async url => {
+      if (url === "/api/dataset") return { ok: true, json: async () => ({ dataset_id: dataset }) };
+      return { ok: true, json: async () => ({ ...payload([], [child]), dataset_id: dataset }) };
+    });
+    const app = startAtlas(); await flush();
+    dataset = "dataset-b";
+    await app.load("root"); await flush();
+    expect(fetch.mock.calls.filter(([url]) => url === "/api/atlas/root")).toHaveLength(2);
     app.destroy();
   });
 
@@ -46,7 +59,7 @@ describe("atlas orchestration", () => {
     fail = true; await app.load("2", true); await flush();
     expect(svg.contains(territory)).toBe(true);
     document.getElementById("retryBtn").click(); await flush();
-    expect(fetch).toHaveBeenCalledTimes(3);
+    expect(fetch).toHaveBeenCalledTimes(4);
     app.destroy();
   });
 

@@ -105,5 +105,8 @@ describe("displayStress", () => {
   it("rejects malformed values", () => {
     expect(() => displayStress([[0, 1]], placements)).toThrow(/square/);
     expect(() => displayStress([[0, NaN], [NaN, 0]], placements.slice(0, 2))).toThrow(/finite/);
+    expect(() => displayStress([[1]], [{ cx: 0, cy: 0 }])).toThrow(/diagonal/);
+    expect(() => displayStress([[0, 1], [2, 0]], placements.slice(0, 2))).toThrow(/symmetric/);
+    expect(() => displayStress([[0, -1], [-1, 0]], placements.slice(0, 2))).toThrow(/non-negative/);
   });
 });

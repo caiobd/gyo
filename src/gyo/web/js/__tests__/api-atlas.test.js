@@ -1,9 +1,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fetchAtlas } from "../api.js";
+import { fetchAtlas, fetchDatasetId } from "../api.js";
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("fetchAtlas", () => {
+  it("fetches the lightweight dataset identity", async () => {
+    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ dataset_id: "abc" }) });
+    vi.stubGlobal("fetch", fetch);
+    await expect(fetchDatasetId()).resolves.toBe("abc");
+    expect(fetch).toHaveBeenCalledWith("/api/dataset", undefined);
+  });
   it("fetches and returns an encoded atlas prefix", async () => {
     const payload = { focus: { prefix: [1, 2] }, children: [] };
     const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => payload });

@@ -1,4 +1,5 @@
 import json
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 
 import numpy as np
@@ -182,6 +183,54 @@ def test_unwritable_geometry_cache_falls_back_to_memory(tmp_path, monkeypatch):
     second = client.get("/api/atlas/root")
     assert first.status_code == second.status_code == 200
     assert first.json()["children"] == second.json()["children"]
+
+
+def test_all_data_endpoints_revalidate_after_dataset_mutation(tmp_path):
+    _seed_run(tmp_path)
+    client = TestClient(create_app(str(tmp_path)))
+    first_tree = client.get("/api/tree").json()
+    first_thumb = client.get("/thumb/0")
+    codes = pd.read_parquet(tmp_path / "codes.parquet")
+    codes["c_0"] = 1
+    codes.to_parquet(tmp_path / "codes.parquet", index=False)
+    atlas = client.get("/api/atlas/root")
+    second_tree = client.get("/api/tree").json()
+    second_thumb = client.get("/thumb/0")
+    assert atlas.status_code == 200
+    assert second_tree["dataset_id"] != first_tree["dataset_id"]
+    assert second_tree["nodes"] != first_tree["nodes"]
+    assert second_thumb.headers["x-dataset-id"] != first_thumb.headers["x-dataset-id"]
+    assert client.get("/api/dataset").json()["dataset_id"] == second_tree["dataset_id"]
+
+
+def test_concurrent_apps_merge_persisted_prefix_geometry(tmp_path):
+    _seed_run(tmp_path)
+    clients = [TestClient(create_app(str(tmp_path))) for _ in range(2)]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(lambda pair: pair[0].get(pair[1]), zip(clients, ["/api/atlas/root", "/api/atlas/0"])))
+    assert all(response.status_code == 200 for response in responses)
+    saved = json.loads((tmp_path / "atlas/v1/geometry.json").read_text())
+    assert set(saved["geometries"]) >= {"root", "0"}
+
+
+def test_atlas_rejects_focus_above_sibling_safety_limit(tmp_path):
+    _seed_run(tmp_path)
+    from gyo.api.server import MAX_ATLAS_SIBLINGS
+    count = MAX_ATLAS_SIBLINGS + 1
+    pd.DataFrame({
+        "idx": range(count), "c_0": range(count), "final_residual": np.zeros(count),
+    }).to_parquet(tmp_path / "codes.parquet", index=False)
+    pd.DataFrame({
+        "idx": range(count), "path": ["000000.png"] * count, "label": ["A"] * count,
+    }).to_parquet(tmp_path / "meta.parquet", index=False)
+    np.save(tmp_path / "embeddings.npy", np.zeros((count, 2)))
+    codebooks = tmp_path / "codebooks/v1"
+    np.save(codebooks / "level_0.npy", np.column_stack((np.arange(count), np.zeros(count))))
+    (codebooks / "level_1.npy").unlink()
+    (codebooks / "config.json").write_text(json.dumps({"num_levels": 1, "codebook_size": count, "dim": 2}))
+    response = TestClient(create_app(str(tmp_path))).get("/api/atlas/root")
+    assert response.status_code == 409
+    assert "Drill down or filter" in response.json()["detail"]
 
 
 def test_atlas_internal_prefix_and_leaf(tmp_path):

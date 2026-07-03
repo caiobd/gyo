@@ -5,6 +5,13 @@ import mimetypes
 import os
 import re
 import tempfile
+import threading
+from functools import wraps
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX fallback
+    fcntl = None
 
 import numpy as np
 from fastapi import FastAPI, HTTPException
@@ -25,6 +32,7 @@ from gyo.tree.signals import node_stats, dead_codeword_counts
 
 WEB = Path(__file__).resolve().parent.parent / "web"
 ATLAS_LAYOUT_VERSION = "metric-mds-v1:euclidean"
+MAX_ATLAS_SIBLINGS = 256
 
 
 def _dataset_files(data_dir):
@@ -47,8 +55,10 @@ def _dataset_fingerprint(data_dir):
             with path.open("rb") as stream:
                 while chunk := stream.read(1024 * 1024):
                     digest.update(chunk)
+        except FileNotFoundError:
+            digest.update(b"<missing>")
         except OSError as exc:
-            raise HTTPException(409, f"required Atlas input missing: {path.name}") from exc
+            raise HTTPException(409, f"unable to read Atlas input: {path.name}") from exc
     return digest.hexdigest()
 
 
@@ -109,6 +119,15 @@ def create_app(data_dir: str) -> FastAPI:
     dataset_cache = None
     fingerprint_stats = None
     geometry_cache = {}
+    active_dataset_id = None
+    cache_lock = threading.RLock()
+
+    def synchronized(function):
+        @wraps(function)
+        def wrapper(*args, **kwargs):
+            with cache_lock:
+                return function(*args, **kwargs)
+        return wrapper
 
     def _fingerprint():
         nonlocal dataset_cache, fingerprint_stats
@@ -146,22 +165,48 @@ def create_app(data_dir: str) -> FastAPI:
         return geometry_cache["geometries"]
 
     def _persist_geometry():
+        nonlocal geometry_cache
         path = data_dir / "atlas" / "v1" / "geometry.json"
+        lock_path = path.with_suffix(".lock")
         temporary = None
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            with tempfile.NamedTemporaryFile(
-                "w",
-                dir=path.parent,
-                prefix=".geometry-",
-                suffix=".tmp",
-                delete=False,
-            ) as stream:
-                temporary = Path(stream.name)
-                json.dump(geometry_cache, stream, separators=(",", ":"), allow_nan=False)
-                stream.flush()
-                os.fsync(stream.fileno())
-            temporary.replace(path)
+            with lock_path.open("a+") as lock_stream:
+                if fcntl is not None:
+                    fcntl.flock(lock_stream.fileno(), fcntl.LOCK_EX)
+                try:
+                    try:
+                        current = json.loads(path.read_text())
+                    except (OSError, UnicodeError, json.JSONDecodeError):
+                        current = {}
+                    if (
+                        current.get("dataset_id") == geometry_cache["dataset_id"]
+                        and current.get("version") == 1
+                        and isinstance(current.get("geometries"), dict)
+                    ):
+                        merged = dict(current["geometries"])
+                        merged.update(geometry_cache["geometries"])
+                        geometry_cache["geometries"] = merged
+                    with tempfile.NamedTemporaryFile(
+                        "w", dir=path.parent, prefix=".geometry-",
+                        suffix=".tmp", delete=False,
+                    ) as stream:
+                        temporary = Path(stream.name)
+                        json.dump(geometry_cache, stream, separators=(",", ":"), allow_nan=False)
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    temporary.replace(path)
+                    try:
+                        directory_fd = os.open(path.parent, os.O_RDONLY)
+                        try:
+                            os.fsync(directory_fd)
+                        finally:
+                            os.close(directory_fd)
+                    except OSError:
+                        pass
+                finally:
+                    if fcntl is not None:
+                        fcntl.flock(lock_stream.fileno(), fcntl.LOCK_UN)
         except (OSError, TypeError, ValueError):
             if temporary is not None:
                 try:
@@ -171,11 +216,14 @@ def create_app(data_dir: str) -> FastAPI:
 
     def _ensure_dataset():
         nonlocal data_cache, identity_cache, atlas_cache, geometry_cache
-        dataset_id = _fingerprint()
-        if atlas_cache is not None and atlas_cache[-1] != dataset_id:
-            data_cache = identity_cache = atlas_cache = None
-            geometry_cache = {}
-        return dataset_id
+        nonlocal active_dataset_id
+        with cache_lock:
+            dataset_id = _fingerprint()
+            if active_dataset_id != dataset_id:
+                data_cache = identity_cache = atlas_cache = None
+                geometry_cache = {}
+                active_dataset_id = dataset_id
+            return dataset_id
 
     def _load():
         nonlocal data_cache, identity_cache
@@ -353,7 +401,9 @@ def create_app(data_dir: str) -> FastAPI:
         )
 
     @app.get("/api/tree")
+    @synchronized
     def tree(level: int = 99):
+        dataset_id = _ensure_dataset()
         codes, final_res, labels, _ = _load()
         cfg_path = data_dir / "codebooks" / "v1" / "config.json"
         if cfg_path.exists():
@@ -363,6 +413,7 @@ def create_app(data_dir: str) -> FastAPI:
         root = build_tree(codes, final_res, labels)
         stats = [s for s in node_stats(root, labels) if s.level <= level]
         return {
+            "dataset_id": dataset_id,
             "num_levels": codes.shape[1],
             "dead_codewords": dead_codeword_counts(codes, codebook_size),
             "nodes": [
@@ -380,7 +431,9 @@ def create_app(data_dir: str) -> FastAPI:
         }
 
     @app.get("/api/node/{prefix}")
+    @synchronized
     def node(prefix: str):
+        dataset_id = _ensure_dataset()
         codes, final_res, labels, _ = _load()
         root = build_tree(codes, final_res, labels)
         pfx = () if prefix == "root" else tuple(int(p) for p in prefix.split(","))
@@ -400,10 +453,12 @@ def create_app(data_dir: str) -> FastAPI:
                 else str(row["label"])
             )
             items.append({"idx": item_id, "path": str(row["path"]), "label": label})
-        return {"items": items, "occupancy": target.occupancy}
+        return {"dataset_id": dataset_id, "items": items, "occupancy": target.occupancy}
 
     @app.get("/api/node/{prefix}/metrics")
+    @synchronized
     def node_metrics(prefix: str):
+        dataset_id = _ensure_dataset()
         codes, final_res, labels, meta_df = _load()
         root = build_tree(codes, final_res, labels)
         pfx = () if prefix == "root" else tuple(int(p) for p in prefix.split(","))
@@ -419,6 +474,7 @@ def create_app(data_dir: str) -> FastAPI:
             counts = Counter(labels[i] for i in target.item_indices)
             label_dist = dict(counts.most_common(20))
         return {
+            "dataset_id": dataset_id,
             "prefix": list(pfx),
             "level": node_stat.level,
             "occupancy": node_stat.occupancy,
@@ -429,7 +485,13 @@ def create_app(data_dir: str) -> FastAPI:
             "label_distribution": label_dist,
         }
 
+    @app.get("/api/dataset")
+    @synchronized
+    def dataset():
+        return {"dataset_id": _ensure_dataset()}
+
     @app.get("/api/atlas/{prefix}")
+    @synchronized
     def atlas(prefix: str):
         dataset_id = _ensure_dataset()
         if prefix == "root":
@@ -498,6 +560,12 @@ def create_app(data_dir: str) -> FastAPI:
             }
 
         child_nodes = list(target.children.values())
+        if len(child_nodes) > MAX_ATLAS_SIBLINGS:
+            raise HTTPException(
+                409,
+                f"Atlas focus has {len(child_nodes)} siblings; limit is "
+                f"{MAX_ATLAS_SIBLINGS}. Drill down or filter the dataset.",
+            )
         child_prefixes = [child.prefix for child in child_nodes]
         distances = sibling_distance_matrix(child_prefixes, codebooks)
         geometries = _geometry_for(dataset_id)
@@ -548,7 +616,9 @@ def create_app(data_dir: str) -> FastAPI:
         }
 
     @app.get("/thumb/{idx}")
+    @synchronized
     def thumb(idx: int):
+        dataset_id = _ensure_dataset()
         _load()
         _, _, meta_by_id = identity_cache
         row = meta_by_id.get(idx)
@@ -564,7 +634,7 @@ def create_app(data_dir: str) -> FastAPI:
         return FileResponse(
             path,
             media_type=media_type or "application/octet-stream",
-            headers={"Cache-Control": "no-cache"},
+            headers={"Cache-Control": "no-cache", "X-Dataset-ID": dataset_id},
         )
 
     return app
