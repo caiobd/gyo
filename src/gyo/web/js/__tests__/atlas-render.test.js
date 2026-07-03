@@ -58,10 +58,10 @@ describe("semantic atlas renderer", () => {
 
   it("expands aggregate buttons without selecting or entering", () => {
     const svg = document.createElementNS(SVG, "svg"); const handlers = { expand: vi.fn(), select: vi.fn(), enter: vi.fn() };
-    renderMap(svg, [{ aggregate: true, label: "+2 groups", count: 2, occupancy: 3, position: [0, 0], cx: 100, cy: 90, r: 20 }], { selected: null, focus: [] }, handlers);
+    renderMap(svg, [{ aggregate: true, label: "+2 groups", count: 2, occupancy: 3, position: [0, 0], cx: 100, cy: 90, r: 20 }], { selected: null, focus: [], aggregateExpanded: true }, handlers);
     const button = svg.querySelector('.aggregate[role="treeitem"]');
     expect(button.getAttribute("aria-expanded")).toBe("false");
-    expect(button.getAttribute("aria-label")).toBe("2 more groups, expand");
+    expect(button.getAttribute("aria-label")).toBe("2 more groups, Reveal more groups");
     button.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true })); button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(handlers.expand).toHaveBeenCalledTimes(2); expect(handlers.select).not.toHaveBeenCalled(); expect(handlers.enter).not.toHaveBeenCalled();
   });

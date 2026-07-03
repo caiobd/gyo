@@ -4,6 +4,7 @@ import { createState, parentPrefix, prefixKey, selectNode, setSampleMode } from 
 import { cancelMapInteractions, renderInspector, renderMap } from "./atlas-render.js";
 
 const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+export const MAX_RENDERED_TERRITORIES = 96;
 
 export function createRequestGuard() {
   let id = 0, controller;
@@ -38,7 +39,7 @@ export function startAtlas(doc = document, win = window) {
   const brand = doc.querySelector(".brand");
   const cache = new Map(), guard = createRequestGuard(), removers = [];
   let state, placements = [], successful = false, currentPrefix = "root";
-  let datasetId = null, layoutStress = 0, densePages = 1, aggregated = false, hiddenCount = 0, pageCapacity = 63;
+  let datasetId = null, layoutStress = 0, requestedRevealScale = 1, aggregated = false, hiddenCount = 0, pageCapacity = 63;
   let view, baseView, drag = null, suppressClick = false, resizeTimer, destroyed = false;
 
   const on = (target, type, listener, options) => {
@@ -83,33 +84,43 @@ export function startAtlas(doc = document, win = window) {
     }
     levelControl.disabled = false;
   }
-  function renderAll(reflow = true) {
+  function renderAll(reflow = true, preserveView = false) {
     if (!state || destroyed) return;
     if (reflow) {
-      const size = bounds(); pageCapacity = viewportCapacity(size.width, size.height); const visibleLimit = pageCapacity * densePages;
+      const size = bounds(); pageCapacity = viewportCapacity(size.width, size.height);
+      const zoomScale = baseView && view ? baseView.width / view.width : 1;
+      const revealScale = Math.max(requestedRevealScale, clamp(zoomScale, 1, 2));
+      const visibleLimit = Math.min(state.payload.children.length, Math.floor(pageCapacity * revealScale), MAX_RENDERED_TERRITORIES);
       const children = aggregateDenseChildren(state.payload.children, visibleLimit, false);
+      const aggregate = children.find(item => item.aggregate);
+      if (aggregate) aggregate.revealable = visibleLimit < Math.min(state.payload.children.length, MAX_RENDERED_TERRITORIES);
       aggregated = children.some(item => item.aggregate); hiddenCount = children.find(item => item.aggregate)?.count || 0; placements = fitTerritories(children, size.width, size.height);
       const matrix = state.payload.projection?.distances;
       layoutStress = aggregated ? null : Array.isArray(matrix) && matrix.length === placements.length
         ? displayStress(matrix, placements)
         : (state.payload.projection?.raw_stress ?? state.payload.projection?.stress ?? 0);
-      resetView();
+      if (!preserveView) resetView();
     }
     const size = bounds();
-    renderMap(svg, placements, { ...state, aggregateExpanded: densePages > 1 }, {
+    renderMap(svg, placements, state, {
       width: size.width, height: size.height,
       select(node) { state = selectNode(state, node.prefix); renderAll(false); },
       enter(node) { if (node.has_children) load(prefixKey(node.prefix)); },
-      expand() { densePages += 1; renderAll(true); },
+      expand() { requestedRevealScale = Math.min(2, requestedRevealScale + .5); renderAll(true, true); },
       path(prefix) { crumbs.querySelectorAll("button").forEach(button => button.classList.toggle("is-path", Boolean(prefix) && Number(button.dataset.depth) <= state.focus.length)); },
     });
+    if (preserveView) applyView();
     renderInspector(inspector, selectedNode(), state.sampleMode, {
       focus: state.payload.focus,
       mode(mode) { state = setSampleMode(state, mode); renderAll(false); },
       enter(node) { if (node.has_children) load(prefixKey(node.prefix)); },
     });
     renderBreadcrumbs(); renderLevelControl();
-    if (collapseDense) collapseDense.hidden = densePages === 1;
+    if (collapseDense) {
+      const expanded = placements.filter(item => !item.aggregate).length > Math.min(pageCapacity, state.payload.children.length);
+      collapseDense.hidden = !expanded; collapseDense.setAttribute("aria-pressed", String(expanded));
+      collapseDense.setAttribute("aria-label", expanded ? "Collapse expanded small groups" : "Small groups collapsed");
+    }
     showStatus();
   }
   async function load(prefix = "root", force = false) {
@@ -124,7 +135,7 @@ export function startAtlas(doc = document, win = window) {
       if (!guard.isCurrent(request.id) || destroyed) return;
       if (payload.dataset_id && datasetId && payload.dataset_id !== datasetId) cache.clear();
       datasetId = payload.dataset_id || datasetId;
-      cache.set(datasetId ? `${datasetId}:${prefix}` : prefix, payload); state = createState(payload); densePages = 1; successful = true; renderAll();
+      cache.set(datasetId ? `${datasetId}:${prefix}` : prefix, payload); state = createState(payload); requestedRevealScale = 1; successful = true; renderAll();
     } catch (reason) {
       if (reason?.name === "AbortError" || !guard.isCurrent(request.id) || destroyed) return;
       error.querySelector("p").textContent = reason instanceof Error ? reason.message : "Unable to load atlas";
@@ -142,8 +153,8 @@ export function startAtlas(doc = document, win = window) {
   on(brand, "click", event => { event.preventDefault(); load("root"); });
   on(back, "click", () => state && load(prefixKey(parentPrefix(state.focus))));
   if (levelControl) on(levelControl, "change", () => state && load(prefixKey(state.focus.slice(0, Number(levelControl.value) - 1))));
-  if (collapseDense) on(collapseDense, "click", () => { densePages = 1; renderAll(true); });
-  on(doc.getElementById("resetViewBtn"), "click", resetView);
+  if (collapseDense) on(collapseDense, "click", () => { requestedRevealScale = 1; renderAll(true, true); });
+  on(doc.getElementById("resetViewBtn"), "click", () => { resetView(); renderAll(true, true); });
   on(win, "keydown", event => { if (event.key === "Escape" && state?.focus.length) load(prefixKey(parentPrefix(state.focus))); });
   on(win, "resize", () => { clearTimeout(resizeTimer); resizeTimer = setTimeout(() => renderAll(true), 100); });
   on(svg, "click", event => { if (suppressClick) { suppressClick = false; event.stopImmediatePropagation(); event.preventDefault(); } }, true);
@@ -151,7 +162,8 @@ export function startAtlas(doc = document, win = window) {
     if (!view) return; event.preventDefault(); const rect = svg.getBoundingClientRect();
     const point = { x: view.x + (event.clientX - rect.left) / rect.width * view.width, y: view.y + (event.clientY - rect.top) / rect.height * view.height };
     const zoomingIn = event.deltaY < 0; view = zoomView(view, zoomingIn ? 1.15 : 1 / 1.15, point, baseView); applyView();
-    if (zoomingIn && aggregated && baseView.width / view.width > densePages + .25) { densePages += 1; renderAll(true); }
+    const zoomCapacity = Math.min(state?.payload.children.length || 0, Math.floor(pageCapacity * clamp(baseView.width / view.width, 1, 2)), MAX_RENDERED_TERRITORIES);
+    if (zoomingIn && aggregated && zoomCapacity > placements.filter(item => !item.aggregate).length) renderAll(true, true);
   }, { passive: false });
   on(svg, "pointerdown", event => { if (event.button != null && event.button !== 0) return; drag = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, view: { ...view }, moved: false }; });
   on(svg, "pointermove", event => {

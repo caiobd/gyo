@@ -63,10 +63,10 @@ export function renderMap(svg, placements, state, handlers = {}) {
     if (samePrefix(state.selected, node.prefix)) group.classList.add("selected");
     group.setAttribute("role", "treeitem");
     group.setAttribute("aria-level", String((state.focus?.length || 0) + 1)); group.setAttribute("aria-posinset", String(index + 1)); group.setAttribute("aria-setsize", String(placements.length));
-    if (node.aggregate) group.setAttribute("aria-expanded", String(Boolean(state.aggregateExpanded)));
+    if (node.aggregate) group.setAttribute("aria-expanded", "false");
     group.setAttribute("tabindex", String(index === (selectedIndex < 0 ? 0 : selectedIndex) ? 0 : -1));
     group.setAttribute("aria-selected", String(samePrefix(state.selected, node.prefix)));
-    group.setAttribute("aria-label", node.aggregate ? `${node.count} more groups, expand` : `${prefixName(node.prefix)}, ${node.occupancy} items`);
+    group.setAttribute("aria-label", node.aggregate ? (node.revealable === false ? `${node.count} groups hidden — enter a branch or collapse` : `${node.count} more groups, Reveal more groups`) : `${prefixName(node.prefix)}, ${node.occupancy} items`);
     const circle = svgEl("circle");
     circle.setAttribute("cx", node.cx); circle.setAttribute("cy", node.cy); circle.setAttribute("r", node.r);
     group.appendChild(circle);

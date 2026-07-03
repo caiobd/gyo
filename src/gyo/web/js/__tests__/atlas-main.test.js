@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createRequestGuard, startAtlas, zoomView } from "../main.js";
+import { createRequestGuard, MAX_RENDERED_TERRITORIES, startAtlas, zoomView } from "../main.js";
 
 const payload = (prefix = [], children = []) => ({
   focus: { prefix, occupancy: 10, samples: { representative: [], outliers: [] } },
@@ -97,6 +97,24 @@ describe("atlas orchestration", () => {
     wheel(); wheel();
     expect(svg.querySelectorAll(".territory").length).toBeGreaterThan(initial);
     expect(document.getElementById("projectionStatus").textContent).toMatch(/groups aggregated/);
+    app.destroy(); vi.useRealTimers();
+  });
+
+  it("preserves the zoomed camera and hard-caps repeated dense reveals", async () => {
+    const svg = shell(); const many = Array.from({ length: 256 }, (_, i) => ({ ...child, prefix: [i], occupancy: i + 1, position: [0, 0] }));
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true, json: async () => ({ ...payload([], many), num_levels: 2 }) });
+    vi.useFakeTimers(); const app = startAtlas(); await vi.runAllTimersAsync();
+    const initial = svg.querySelectorAll(".territory:not(.aggregate)").length;
+    const wheel = () => svg.dispatchEvent(new WheelEvent("wheel", { deltaY: -1, clientX: 400, clientY: 300, bubbles: true, cancelable: true }));
+    wheel(); wheel(); const zoomed = svg.getAttribute("viewBox");
+    expect(svg.querySelectorAll(".territory:not(.aggregate)").length).toBeGreaterThan(initial);
+    expect(svg.getAttribute("viewBox")).toBe(zoomed);
+    const aggregate = () => svg.querySelector(".territory.aggregate");
+    for (let i = 0; i < 10; i++) aggregate()?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(svg.querySelectorAll(".territory:not(.aggregate)").length).toBeLessThanOrEqual(MAX_RENDERED_TERRITORIES);
+    expect(aggregate()).not.toBeNull(); expect(aggregate().getAttribute("aria-expanded")).toBe("false");
+    expect(aggregate().getAttribute("aria-label")).toContain("enter a branch or collapse");
+    expect(svg.getAttribute("viewBox")).toBe(zoomed);
     app.destroy(); vi.useRealTimers();
   });
 
