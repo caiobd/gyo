@@ -203,6 +203,32 @@ def test_all_data_endpoints_revalidate_after_dataset_mutation(tmp_path):
     assert client.get("/api/dataset").json()["dataset_id"] == second_tree["dataset_id"]
 
 
+def test_metadata_only_mutation_changes_identity_and_reloads_consumers(tmp_path):
+    _seed_run(tmp_path)
+    client = TestClient(create_app(str(tmp_path)))
+    first_id = client.get("/api/dataset").json()["dataset_id"]
+    client.get("/api/atlas/root")
+    first_node = client.get("/api/node/0").json()
+    first_thumb = client.get("/thumb/0").content
+
+    meta = pd.read_parquet(tmp_path / "meta.parquet")
+    meta["label"] = ["New A", "New B", "New C"]
+    meta.loc[meta["idx"] == 0, "path"] = "000002.png"
+    meta.to_parquet(tmp_path / "meta.parquet", index=False)
+
+    second_id = client.get("/api/dataset").json()["dataset_id"]
+    atlas = client.get("/api/atlas/root").json()
+    second_node = client.get("/api/node/0").json()
+    second_thumb = client.get("/thumb/0").content
+    assert second_id != first_id
+    assert second_node["items"] != first_node["items"]
+    assert second_node["items"][0]["label"] == "New A"
+    assert second_node["items"][0]["path"] == "000002.png"
+    assert second_thumb != first_thumb
+    atlas_items = [item for node in [atlas["focus"], *atlas["children"]] for item in node["samples"]["representative"]]
+    assert any(item["idx"] == 0 and item["label"] == "New A" and item["path"] == "000002.png" for item in atlas_items)
+
+
 def test_concurrent_apps_merge_persisted_prefix_geometry(tmp_path):
     _seed_run(tmp_path)
     clients = [TestClient(create_app(str(tmp_path))) for _ in range(2)]

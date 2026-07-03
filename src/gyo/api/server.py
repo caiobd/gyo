@@ -40,6 +40,7 @@ def _dataset_files(data_dir):
     codebooks = root / "codebooks" / "v1"
     return [
         root / "codes.parquet",
+        root / "meta.parquet",
         root / "embeddings.npy",
         *sorted(codebooks.glob("*.npy")),
         codebooks / "config.json",
@@ -634,6 +635,8 @@ def create_app(data_dir: str) -> FastAPI:
         return FileResponse(
             path,
             media_type=media_type or "application/octet-stream",
+            # Image bytes are intentionally outside dataset identity; thumbnails
+            # are always revalidated instead of being retained by the browser.
             headers={"Cache-Control": "no-cache", "X-Dataset-ID": dataset_id},
         )
 
