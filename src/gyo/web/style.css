@@ -295,6 +295,25 @@ button:hover {
     grid-template-columns: 1fr 1fr;
   }
 }
+@media (max-width: 860px) and (max-height: 360px) {
+  body {
+    height: auto;
+    min-height: 100vh;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+  .workspace {
+    flex: none;
+    min-height: 220px;
+    grid-template-rows: minmax(100px, 35vh) minmax(120px, auto);
+  }
+  .map-panel {
+    min-height: 100px;
+  }
+  .inspector {
+    min-height: 120px;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

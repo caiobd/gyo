@@ -289,11 +289,23 @@ async def flow_responsive(page: Page, base: str) -> None:
     assert await page.locator("#inspector").evaluate("element => element.scrollTop > 0")
     assert await page.locator(".map-panel").evaluate("element => element.getBoundingClientRect().top") == map_top
     assert await page.evaluate("document.documentElement.scrollHeight <= window.innerHeight + 2")
+    tablet_image = page.locator("#inspector .sample-grid img").first
+    await tablet_image.wait_for(state="visible", timeout=TIMEOUT)
+    assert await tablet_image.evaluate("image => image.complete && image.naturalWidth > 0")
+    tablet_image_box = await tablet_image.bounding_box()
+    assert tablet_image_box and tablet_image_box["width"] >= 120 and tablet_image_box["height"] >= 120
     await page.set_viewport_size({"width": 760, "height": 400})
     await page.wait_for_function("document.querySelector('#inspector').getBoundingClientRect().bottom <= innerHeight + 2")
     for selector in ("#atlas", "#inspector", "#resetViewBtn", "#backBtn"):
         assert await page.locator(selector).evaluate("element => { const r = element.getBoundingClientRect(); return r.width > 0 && r.height > 0 && r.right > 0 && r.bottom > 0 && r.left < innerWidth && r.top < innerHeight; }")
     assert await page.evaluate("document.documentElement.scrollHeight <= window.innerHeight + 2")
+    assert await page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 2")
+    await page.set_viewport_size({"width": 320, "height": 180})
+    short_state = await page.locator("#inspector").evaluate("element => { const r = element.getBoundingClientRect(); return { intersects: r.bottom > 0 && r.top < innerHeight, scrollable: document.documentElement.scrollHeight > innerHeight, bodyOverflow: getComputedStyle(document.body).overflowY }; }")
+    assert short_state["intersects"] or (short_state["scrollable"] and short_state["bodyOverflow"] != "hidden"), short_state
+    await page.locator("#inspector").evaluate("element => element.scrollIntoView()")
+    assert await page.locator("#inspector").evaluate("element => { const r = element.getBoundingClientRect(); return r.height > 0 && r.bottom > 0 && r.top < innerHeight; }")
+    assert await page.get_by_role("button", name="Representative", exact=True).evaluate("element => { element.scrollIntoView(); const r = element.getBoundingClientRect(); return r.bottom > 0 && r.top < innerHeight; }")
     assert await page.evaluate("document.documentElement.scrollWidth <= window.innerWidth + 2")
     await page.set_viewport_size({"width": 1440, "height": 900})
     await page.wait_for_function("getComputedStyle(document.querySelector('.workspace')).gridTemplateColumns.split(' ').length === 2")
@@ -343,6 +355,58 @@ async def flow_accessibility_audit(page: Page, base: str) -> None:
         })""")
         assert all(transition <= 0.001 and animation <= 0.001 for _, transition, animation in motion), motion
         assert await page.evaluate("""() => { const ids = [...document.querySelectorAll('[id]')].map(element => element.id); return new Set(ids).size === ids.length; }""")
+
+        await page.reload(wait_until="domcontentloaded")
+        await boot(page, base)
+        await page.evaluate("document.activeElement?.blur()")
+        tab_sequence = []
+        for _ in range(20):
+            await page.keyboard.press("Tab")
+            active = await page.evaluate("""() => { const e = document.activeElement; return { id: e.id, role: e.getAttribute('role'), text: e.textContent.trim(), brand: e.classList.contains('brand'), prefix: e.dataset.prefix }; }""")
+            tab_sequence.append(active)
+            if active["role"] == "treeitem":
+                break
+        milestones = [
+            next(i for i, item in enumerate(tab_sequence) if item["brand"]),
+            next(i for i, item in enumerate(tab_sequence) if item["text"] == "Root"),
+            next(i for i, item in enumerate(tab_sequence) if item["id"] == "resetViewBtn"),
+            next(i for i, item in enumerate(tab_sequence) if item["role"] == "treeitem"),
+        ]
+        assert milestones == sorted(milestones), tab_sequence
+        assert await page.locator('#atlas [role="treeitem"][tabindex="0"]').count() == 1
+        tab_selected_prefix = tab_sequence[-1]["prefix"]
+        await page.keyboard.press("Enter")
+        await page.wait_for_function("prefix => document.querySelector(`[data-prefix=\"${prefix}\"]`)?.getAttribute('aria-selected') === 'true'", arg=tab_selected_prefix)
+
+        await page.evaluate("document.activeElement?.blur()")
+        tabbed_controls = []
+        activated_representative = activated_outliers = False
+        for _ in range(60):
+            await page.keyboard.press("Tab")
+            label = await page.evaluate("document.activeElement.textContent.trim()")
+            tabbed_controls.append(label)
+            if label == "Representative" and not activated_representative:
+                await page.keyboard.press("Space")
+                activated_representative = True
+            elif label == "Outliers" and not activated_outliers:
+                await page.keyboard.press("Enter")
+                activated_outliers = True
+            elif label == "Enter group" and activated_representative and activated_outliers:
+                await page.keyboard.press("Space")
+                break
+        assert activated_representative and activated_outliers and "Enter group" in tabbed_controls, tabbed_controls
+        await page.wait_for_function("document.querySelector('#breadcrumbs [aria-current=page]')?.textContent !== 'Root'")
+        await page.evaluate("document.activeElement?.blur()")
+        entered_sequence = []
+        for _ in range(20):
+            await page.keyboard.press("Tab")
+            active_id = await page.evaluate("document.activeElement.id")
+            entered_sequence.append(active_id)
+            if active_id == "backBtn":
+                await page.keyboard.press("Space")
+                break
+        assert "backBtn" in entered_sequence, entered_sequence
+        await page.wait_for_function("document.querySelector('#breadcrumbs [aria-current=page]')?.textContent === 'Root'")
 
         first = page.locator('#atlas [role="treeitem"]').first
         await first.focus()
@@ -405,11 +469,22 @@ async def flow_accessibility_audit(page: Page, base: str) -> None:
         await page.keyboard.press("Space")
         await page.wait_for_function("document.querySelector('#breadcrumbs [aria-current=page]')?.textContent === 'Root'")
 
+        await page.locator('#atlas .territory[data-prefix="2"]').focus()
+        await page.keyboard.press("Enter")
         await page.set_viewport_size({"width": 720, "height": 450})
         await page.wait_for_function("document.querySelector('#inspector').getBoundingClientRect().bottom <= innerHeight + 2")
         assert await page.evaluate("document.documentElement.scrollWidth <= innerWidth + 2 && document.documentElement.scrollHeight <= innerHeight + 2")
         assert await page.locator("#inspector").evaluate("element => { const r = element.getBoundingClientRect(); return r.width > 0 && r.height > 0 && r.top < innerHeight && r.bottom > 0; }")
-        assert await page.evaluate("""() => { const controls = [...document.querySelectorAll('.map-toolbar button')]; return controls.every((a, i) => controls.slice(i + 1).every(b => { const x = a.getBoundingClientRect(), y = b.getBoundingClientRect(); return x.right <= y.left || y.right <= x.left || x.bottom <= y.top || y.bottom <= x.top; })); }""")
+        overlap_report = await page.evaluate("""() => {
+            const visible = element => { const r = element.getBoundingClientRect(), s = getComputedStyle(element); return s.visibility !== 'hidden' && s.display !== 'none' && r.width > 0 && r.height > 0 && r.right > 0 && r.bottom > 0 && r.left < innerWidth && r.top < innerHeight; };
+            const controls = [...document.querySelectorAll('.topbar a, .topbar button, .map-toolbar button, #atlas [role="treeitem"][tabindex="0"], #inspector button')].filter(visible);
+            const overlaps = [];
+            controls.forEach((a, i) => controls.slice(i + 1).forEach(b => { if (a.contains(b) || b.contains(a)) return; const x = a.getBoundingClientRect(), y = b.getBoundingClientRect(); if (Math.min(x.right,y.right) > Math.max(x.left,y.left) && Math.min(x.bottom,y.bottom) > Math.max(x.top,y.top)) overlaps.push([a.id || a.textContent.trim(), b.id || b.textContent.trim()]); }));
+            const contained = (childSelector, panelSelector) => { const child = document.querySelector(childSelector)?.getBoundingClientRect(), panel = document.querySelector(panelSelector)?.getBoundingClientRect(); return child && panel && child.left >= panel.left - 1 && child.right <= panel.right + 1 && child.top >= panel.top - 1 && child.bottom <= panel.bottom + 1; };
+            return { overlaps, inspectorHeading: contained('#inspector h2', '#inspector'), projection: contained('#projectionStatus', '.topbar'), breadcrumbs: contained('#breadcrumbs', '.topbar') };
+        }""")
+        assert not overlap_report["overlaps"], overlap_report
+        assert overlap_report["inspectorHeading"] and overlap_report["projection"] and overlap_report["breadcrumbs"], overlap_report
     finally:
         await page.unroute("**/api/atlas/root", force_warning)
         await page.unroute("**/thumb/*", fail_thumbnail)
