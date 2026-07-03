@@ -148,13 +148,16 @@ async def flow_boot(page: Page, base: str) -> None:
     assert await target.evaluate("node => node.classList.contains('is-path')")
     assert await page.locator("#atlas .focus-anchor").evaluate("node => node.classList.contains('is-path')")
     assert "gyo" in (await page.locator(".brand").inner_text()).lower()
-    assert "Layout stress" in await page.locator("#projectionStatus").inner_text()
+    projection = await page.locator("#projectionStatus").inner_text()
+    assert "Layout stress" in projection and "sibling reconstructions" in projection
+    assert "containment and paths exact" in projection and "raw is projection" in projection
+    assert await page.locator(".residual-legend").inner_text() == "Residual low\nhigh"
     assert await page.locator("#mapError").is_hidden()
 
 
 async def select_internal(page: Page):
     territory = page.locator('#atlas .territory[data-prefix="2"]')
-    circle = territory.locator("circle")
+    circle = territory.locator("circle:not(.selection-ring)")
     await circle.wait_for(state="visible", timeout=TIMEOUT)
     box = await circle.bounding_box()
     assert box and box["width"] > 4 and box["height"] > 4, "internal territory has no hittable circle"
@@ -169,7 +172,7 @@ async def select_internal(page: Page):
         timeout=TIMEOUT,
     )
     await page.locator("#inspector .metrics").wait_for(timeout=TIMEOUT)
-    assert "Group 2" in await page.locator("#inspector h2").inner_text()
+    assert await page.locator("#inspector h2").inner_text() == "Level 1 · token c2"
     return territory
 
 
@@ -177,7 +180,10 @@ async def flow_selection_and_samples(page: Page, base: str) -> None:
     await boot(page, base)
     await select_internal(page)
     text = await page.locator("#inspector").inner_text()
-    assert "Parent distance" in text and "Token norm" in text
+    assert "Mean residual" in text and "Normalized residual" in text
+    assert "Purity" in text and "Occupancy" in text
+    assert "Parent distance / displacement" in text and "Token norm" in text
+    assert "Token c2 moves the reconstruction" in text
     images = page.locator("#inspector .sample-grid img")
     assert await images.count() > 0
     await images.first.wait_for(state="visible")
@@ -205,7 +211,7 @@ async def flow_outliers_and_keyboard(page: Page, base: str) -> None:
     await target.focus()
     await target.press("Enter")
     await page.wait_for_function("document.querySelector('[data-prefix=\"5\"]')?.getAttribute('aria-selected') === 'true'")
-    assert "Group 5" in await page.locator("#inspector h2").inner_text()
+    assert await page.locator("#inspector h2").inner_text() == "Level 1 · token c5"
 
 
 async def flow_enter_and_breadcrumbs(page: Page, base: str) -> None:
@@ -245,8 +251,8 @@ async def flow_parent_comparison(page: Page, base: str) -> None:
     await select_internal(page)
     await page.get_by_role("button", name="Parent comparison", exact=True).click()
     comparison = page.locator("#inspector .comparison")
-    assert "Current focus" in await comparison.inner_text()
-    assert "Selected group" in await comparison.inner_text()
+    assert "Parent group samples" in await comparison.inner_text()
+    assert "Child token c2 samples" in await comparison.inner_text()
     assert await comparison.locator("section").count() == 2
     for section in await comparison.locator("section").all():
         images = section.locator("img")

@@ -7,6 +7,15 @@ const samePrefix = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length ==
 const svgEl = name => document.createElementNS(SVG, name);
 const renderSessions = new WeakMap();
 
+export function residualColor(value) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return null;
+  const t = Math.max(0, Math.min(1, value));
+  const stops = [[79, 157, 105], [214, 180, 72], [216, 91, 87]];
+  const segment = t <= .5 ? 0 : 1, amount = segment ? (t - .5) * 2 : t * 2;
+  const rgb = stops[segment].map((channel, index) => Math.round(channel + (stops[segment + 1][index] - channel) * amount));
+  return `#${rgb.map(channel => channel.toString(16).padStart(2, "0")).join("")}`;
+}
+
 export function cancelMapInteractions(svg) {
   const session = renderSessions.get(svg);
   if (session?.clickTimer) clearTimeout(session.clickTimer);
@@ -71,7 +80,10 @@ export function renderMap(svg, placements, state, handlers = {}) {
     group.setAttribute("aria-label", node.aggregate ? (node.revealable === false ? `${node.count} groups hidden — enter a branch or collapse` : `${node.count} more groups, Reveal more groups`) : `${prefixName(node.prefix)}, ${node.occupancy} items`);
     const circle = svgEl("circle");
     circle.setAttribute("cx", node.cx); circle.setAttribute("cy", node.cy); circle.setAttribute("r", node.r);
+    const residualStroke = residualColor(node.residual_norm);
+    if (residualStroke) circle.style.stroke = residualStroke;
     group.appendChild(circle);
+    const ring = circle.cloneNode(); ring.classList.add("selection-ring"); ring.removeAttribute("style"); ring.setAttribute("r", node.r + 5); group.appendChild(ring);
     const clip = svgEl("clipPath");
     const clipId = `territory-clip-${index}`;
     clip.id = clipId;
@@ -79,22 +91,31 @@ export function renderMap(svg, placements, state, handlers = {}) {
     clip.appendChild(clipCircle); defs.appendChild(clip);
     const samples = node.samples?.representative || [];
     samples.slice(0, 4).forEach((sample, sampleIndex) => {
-      const image = svgEl("image");
       const size = Math.max(24, node.r * .58);
       const col = sampleIndex % 2, row = Math.floor(sampleIndex / 2);
+      const x = node.cx - size + col * size, y = node.cy - size + row * size;
+      const addSkeleton = () => {
+        const skeleton = svgEl("rect"); skeleton.classList.add("svg-image-skeleton");
+        skeleton.setAttribute("x", x); skeleton.setAttribute("y", y); skeleton.setAttribute("width", size); skeleton.setAttribute("height", size);
+        skeleton.setAttribute("clip-path", `url(#${clipId})`); group.appendChild(skeleton); return skeleton;
+      };
+      const image = svgEl("image");
       image.setAttribute("href", thumbUrl(sample.idx));
-      image.setAttribute("x", node.cx - size + col * size);
-      image.setAttribute("y", node.cy - size + row * size);
+      image.setAttribute("x", x);
+      image.setAttribute("y", y);
       image.setAttribute("width", size); image.setAttribute("height", size);
       image.setAttribute("preserveAspectRatio", "xMidYMid slice"); image.setAttribute("clip-path", `url(#${clipId})`);
       image.setAttribute("visibility", "visible");
+      let skeleton = addSkeleton();
+      image.addEventListener("load", () => { skeleton?.remove(); skeleton = null; });
       image.addEventListener("error", () => {
+        skeleton?.remove(); skeleton = null;
         image.setAttribute("visibility", "hidden");
         const retry = svgEl("g"); retry.classList.add("svg-image-retry"); retry.setAttribute("role", "button"); retry.setAttribute("tabindex", "0"); retry.setAttribute("aria-label", `Retry sample ${sample.idx}`);
         const plate = svgEl("rect"); plate.setAttribute("x", image.getAttribute("x")); plate.setAttribute("y", image.getAttribute("y")); plate.setAttribute("width", size); plate.setAttribute("height", size);
         const retryText = svgEl("text"); retryText.setAttribute("x", Number(image.getAttribute("x")) + size / 2); retryText.setAttribute("y", Number(image.getAttribute("y")) + size / 2); retryText.textContent = "Retry";
         retry.append(plate, retryText); group.appendChild(retry);
-        const reload = event => { event.stopPropagation(); retry.remove(); image.setAttribute("visibility", "visible"); image.setAttribute("href", ""); image.setAttribute("href", thumbUrl(sample.idx)); };
+        const reload = event => { event.stopPropagation(); retry.remove(); skeleton = addSkeleton(); image.setAttribute("visibility", "visible"); image.setAttribute("href", ""); image.setAttribute("href", thumbUrl(sample.idx)); };
         retry.addEventListener("click", reload); retry.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") reload(event); });
       });
       group.appendChild(image);
@@ -150,7 +171,9 @@ function sampleGrid(parent, samples) {
     const slot = document.createElement("div"); slot.className = "thumb-slot";
     const load = () => {
       slot.replaceChildren();
+      const skeleton = document.createElement("div"); skeleton.className = "skeleton"; skeleton.setAttribute("aria-hidden", "true"); slot.appendChild(skeleton);
       const image = document.createElement("img"); image.src = thumbUrl(sample.idx); image.alt = sample.label == null ? `Sample ${sample.idx}` : String(sample.label); image.loading = "lazy";
+      image.addEventListener("load", () => skeleton.remove());
       image.addEventListener("error", () => { slot.replaceChildren(); text(slot, "Image unavailable", "thumb-error"); const retry = document.createElement("button"); retry.type = "button"; retry.textContent = "Retry"; retry.addEventListener("click", load); slot.appendChild(retry); });
       slot.appendChild(image);
     };
@@ -161,13 +184,20 @@ function sampleGrid(parent, samples) {
 export function renderInspector(container, node, mode, handlers = {}) {
   container.replaceChildren();
   if (!node) { text(container, "Select a territory to inspect it.", "inspector-empty"); return; }
-  const heading = document.createElement("h2"); heading.textContent = prefixName(node.prefix); container.appendChild(heading);
+  const token = node.prefix?.length ? `c${node.prefix.at(-1)}` : null;
+  const heading = document.createElement("h2"); heading.textContent = token ? `Level ${node.prefix.length} · token ${token}` : "Root group"; container.appendChild(heading);
   const metrics = document.createElement("div"); metrics.className = "metrics"; container.appendChild(metrics);
   metric(metrics, "Occupancy", node.occupancy, value => value.toLocaleString());
   metric(metrics, "Purity", node.purity, value => `${(value * 100).toFixed(1)}%`);
-  metric(metrics, "Residual", node.mean_residual, value => value.toFixed(3));
-  metric(metrics, "Parent distance", node.parent_distance, value => value.toFixed(3));
+  metric(metrics, "Mean residual", node.mean_residual, value => value.toFixed(3));
+  metric(metrics, "Normalized residual", node.residual_norm, value => value.toFixed(3));
+  metric(metrics, "Parent distance / displacement", node.parent_distance, value => value.toFixed(3));
   metric(metrics, "Token norm", node.token_norm, value => value.toFixed(3));
+  if (token && Number.isFinite(node.parent_distance)) {
+    const explanation = document.createElement("p"); explanation.className = "parent-explanation";
+    explanation.textContent = `Token ${token} moves the reconstruction by ${node.parent_distance.toFixed(3)} in original Euclidean space. Token norm measures the codebook vector; displacement compares parent and child reconstructions${Number.isFinite(node.token_norm) && Math.abs(node.token_norm - node.parent_distance) < 1e-9 ? ", so they are equal for this residual-quantization step" : ""}.`;
+    container.appendChild(explanation);
+  }
   const tabs = document.createElement("div"); tabs.className = "tabs"; tabs.setAttribute("aria-label", "Sample mode");
   [["representative", "Representative"], ["outliers", "Outliers"], ["parent", "Parent comparison"]].forEach(([key, label]) => {
     const button = document.createElement("button"); button.type = "button"; button.textContent = label; button.setAttribute("aria-pressed", String(mode === key)); button.addEventListener("click", () => handlers.mode?.(key)); tabs.appendChild(button);
@@ -176,7 +206,7 @@ export function renderInspector(container, node, mode, handlers = {}) {
   if (node.has_children) { const enter = document.createElement("button"); enter.type = "button"; enter.className = "enter-group"; enter.textContent = "Enter group"; enter.addEventListener("click", () => handlers.enter?.(node)); container.appendChild(enter); }
   if (mode === "parent") {
     const comparison = document.createElement("div"); comparison.className = "comparison"; container.appendChild(comparison);
-    const parent = document.createElement("section"); const parentTitle = document.createElement("h3"); parentTitle.textContent = "Current focus"; parent.appendChild(parentTitle); sampleGrid(parent, handlers.focus?.samples?.representative); comparison.appendChild(parent);
-    const child = document.createElement("section"); const childTitle = document.createElement("h3"); childTitle.textContent = "Selected group"; child.appendChild(childTitle); sampleGrid(child, node.samples?.representative); comparison.appendChild(child);
+    const parent = document.createElement("section"); const parentTitle = document.createElement("h3"); parentTitle.textContent = "Parent group samples"; parent.appendChild(parentTitle); sampleGrid(parent, handlers.focus?.samples?.representative); comparison.appendChild(parent);
+    const child = document.createElement("section"); const childTitle = document.createElement("h3"); childTitle.textContent = `Child token ${token} samples`; child.appendChild(childTitle); sampleGrid(child, node.samples?.representative); comparison.appendChild(child);
   } else sampleGrid(container, node.samples?.[mode]);
 }

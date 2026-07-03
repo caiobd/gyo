@@ -57,7 +57,7 @@ export function startAtlas(doc = document, win = window) {
     if (Number.isFinite(projection.raw_stress ?? projection.stress)) parts.push(`Raw MDS stress ${(projection.raw_stress ?? projection.stress).toFixed(3)}`);
     if (aggregated) parts.push(`layout stress unavailable while ${hiddenCount} groups aggregated`);
     else if (Number.isFinite(layoutStress)) parts.push(`Layout stress ${layoutStress.toFixed(3)}`);
-    parts.push("projected approximation among siblings");
+    parts.push("approximate Euclidean distance among sibling reconstructions; containment and paths exact; raw is projection, layout includes display fitting");
     if (fallback) parts.push("grid fallback: semantic distances distorted");
     status.textContent = parts.join(" · "); status.classList.toggle("warning", Boolean(!aggregated && (layoutStress > .10 || fallback)));
   }

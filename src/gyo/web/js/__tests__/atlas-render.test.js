@@ -1,17 +1,44 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from "vitest";
-import { renderInspector, renderMap } from "../atlas-render.js";
+import { renderInspector, renderMap, residualColor } from "../atlas-render.js";
 
 const SVG = "http://www.w3.org/2000/svg";
 const hostile = `<img src=x onerror="globalThis.pwned=true">`;
 const sample = (idx, label = hostile) => ({ idx, label, path: `${idx}.png` });
 const node = {
   prefix: [2], occupancy: 12, purity: 0.75, mean_residual: 1.25,
-  parent_distance: 0.5, token_norm: 2, has_children: true,
+  residual_norm: .25, parent_distance: 0.5, token_norm: 2, has_children: true,
   samples: { representative: [sample(7)], outliers: [sample(8)] },
 };
 
 describe("semantic atlas renderer", () => {
+  it("maps normalized residuals to a clamped accessible traffic-light scale", () => {
+    expect(residualColor(0)).toBe("#4f9d69");
+    expect(residualColor(1)).toBe("#d85b57");
+    expect(residualColor(-2)).toBe(residualColor(0));
+    expect(residualColor(4)).toBe(residualColor(1));
+    expect(residualColor(null)).toBeNull();
+    expect(residualColor(Number.NaN)).toBeNull();
+  });
+
+  it("shows complete analytics, explicit token identity, and parent semantics", () => {
+    const container = document.createElement("aside");
+    renderInspector(container, node, "parent", { focus: { samples: node.samples } });
+    expect(container.querySelector("h2").textContent).toBe("Level 1 · token c2");
+    expect(container.textContent).toContain("Mean residual");
+    expect(container.textContent).toContain("Normalized residual");
+    expect(container.textContent).toContain("Token c2 moves the reconstruction by 0.500 in original Euclidean space");
+    expect(container.textContent).toContain("Parent group samples");
+    expect(container.textContent).toContain("Child token c2 samples");
+  });
+
+  it("omits unavailable metrics and gives root no token identity", () => {
+    const container = document.createElement("aside");
+    renderInspector(container, { ...node, prefix: [], purity: null, parent_distance: null, token_norm: null }, "representative");
+    expect(container.querySelector("h2").textContent).toBe("Root group");
+    expect(container.textContent).not.toContain("Purity");
+    expect(container.textContent).not.toContain("Token norm");
+  });
   it("creates accessible territories safely and dispatches pointer and keyboard actions", () => {
     const svg = document.createElementNS(SVG, "svg");
     const handlers = { select: vi.fn(), enter: vi.fn() };
@@ -91,8 +118,8 @@ describe("semantic atlas renderer", () => {
     const container = document.createElement("aside");
     const focus = { ...node, prefix: [1], samples: { representative: [sample(1, "focus sample")], outliers: [] } };
     renderInspector(container, node, "parent", { focus });
-    expect(container.textContent).toContain("Current focus");
-    expect(container.textContent).toContain("Selected group");
+    expect(container.textContent).toContain("Parent group samples");
+    expect(container.textContent).toContain("Child token c2 samples");
     expect(container.textContent).toContain("focus sample");
     expect(container.textContent).toContain(hostile);
   });
@@ -133,14 +160,29 @@ describe("semantic atlas renderer", () => {
   it("keeps an SVG preview slot and offers a retry after image failure", () => {
     const svg = document.createElementNS(SVG, "svg");
     renderMap(svg, [{ ...node, cx: 100, cy: 90, r: 70 }], { selected: null }, {});
-    const image = svg.querySelector("image");
+    const image = svg.querySelector("image"); const skeleton = svg.querySelector(".svg-image-skeleton");
+    expect(skeleton).not.toBeNull();
+    const geometry = [image.getAttribute("x"), image.getAttribute("y"), image.getAttribute("width"), image.getAttribute("height")];
+    image.dispatchEvent(new Event("load")); expect(svg.querySelector(".svg-image-skeleton")).toBeNull();
     image.dispatchEvent(new Event("error"));
     const retry = svg.querySelector('[role="button"]');
     expect(retry?.textContent).toContain("Retry");
     expect(image.getAttribute("visibility")).toBe("hidden");
     retry.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     expect(image.getAttribute("visibility")).toBe("visible");
+    expect(svg.querySelector(".svg-image-skeleton")).not.toBeNull();
+    expect([image.getAttribute("x"), image.getAttribute("y"), image.getAttribute("width"), image.getAttribute("height")]).toEqual(geometry);
     expect(image.getAttribute("href")).toContain("/thumb/7");
+  });
+
+  it("preserves inspector slot geometry while loading, on error, and retry", () => {
+    const container = document.createElement("aside"); renderInspector(container, node, "representative");
+    const slot = container.querySelector(".thumb-slot"), image = slot.querySelector("img");
+    expect(slot.querySelector(".skeleton")).not.toBeNull();
+    image.dispatchEvent(new Event("load")); expect(slot.querySelector(".skeleton")).toBeNull();
+    image.dispatchEvent(new Event("error")); expect(slot.querySelector("button").textContent).toBe("Retry");
+    slot.querySelector("button").click(); expect(slot.querySelector(".skeleton")).not.toBeNull();
+    expect(slot.querySelector("img")).not.toBeNull();
   });
 
   it("uses roving tabindex and arrow, Home, and End navigation", () => {

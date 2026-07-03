@@ -147,7 +147,7 @@ describe("atlas orchestration", () => {
     svg.querySelector(".territory").dispatchEvent(new MouseEvent("click", { bubbles: true })); await vi.runAllTimersAsync();
     expect(document.getElementById("inspector").textContent).toContain("Select a territory");
     svg.querySelector(".territory").dispatchEvent(new MouseEvent("click", { bubbles: true })); await vi.runAllTimersAsync();
-    expect(document.getElementById("inspector").textContent).toContain("Group 1");
+    expect(document.getElementById("inspector").textContent).toContain("Level 1 · token c1");
     let view = { x: 0, y: 0, width: 800, height: 600 };
     for (let i = 0; i < 100; i++) view = zoomView(view, 1.15, { x: 400, y: 300 }, { width: 800, height: 600 });
     expect(view.width).toBeGreaterThanOrEqual(80);
@@ -186,7 +186,7 @@ describe("atlas orchestration", () => {
     expect(() => svg.dispatchEvent(pointer(eventType, { pointerId: 5 }))).not.toThrow();
     svg.querySelector(".territory").dispatchEvent(new MouseEvent("click", { bubbles: true }));
     await vi.runAllTimersAsync();
-    expect(document.getElementById("inspector").textContent).toContain("Group 1");
+    expect(document.getElementById("inspector").textContent).toContain("Level 1 · token c1");
     expect(svg.releasePointerCapture).not.toHaveBeenCalled();
     app.destroy(); vi.useRealTimers();
   });

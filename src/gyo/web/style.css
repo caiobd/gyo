@@ -136,14 +136,14 @@ button:hover {
 .territory.aggregate circle { fill: var(--surface-raised); stroke-dasharray: 4 3; }
 .empty-level { fill: var(--muted); text-anchor: middle; font-size: 14px; }
 #breadcrumbs button.is-path { color: var(--accent); }
-.territory:hover circle,
-.territory:focus circle {
-  stroke: var(--accent);
-}
 .territory.selected circle {
-  stroke: var(--accent);
-  stroke-width: 4;
+  stroke-width: 3;
 }
+.territory .selection-ring { fill: none; stroke: transparent; stroke-width: 3; pointer-events: none; }
+.territory:hover .selection-ring, .territory:focus .selection-ring, .territory.selected .selection-ring { stroke: var(--accent); }
+.svg-image-skeleton, .skeleton { background: linear-gradient(110deg, var(--surface-raised) 25%, var(--line) 45%, var(--surface-raised) 65%); fill: var(--surface-raised); }
+.residual-legend { position: absolute; z-index: 3; right: .8rem; bottom: .8rem; display: flex; align-items: center; gap: .35rem; padding: .3rem .45rem; background: color-mix(in srgb, var(--canvas) 88%, transparent); color: var(--muted); font-size: .72rem; border-radius: 4px; }
+.residual-legend i { width: 64px; height: 6px; border-radius: 4px; background: linear-gradient(90deg, #4f9d69, #d6b448, #d85b57); }
 .territory image {
   opacity: 0.66;
 }
@@ -203,6 +203,7 @@ button:hover {
 .inspector h2 {
   margin: 0.2rem 0 1rem;
 }
+.projection-help, .parent-explanation { color: var(--muted); font-size: .82rem; }
 .metrics {
   display: grid;
   grid-template-columns: 1fr 1fr;
