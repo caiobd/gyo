@@ -19,4 +19,10 @@ describe("semantic atlas shell", () => {
     expect(css).toContain('[data-residual-band="low"] > circle:not(.selection-ring)');
     expect(html).toContain("line-pattern scale");
   });
+
+  it("does not let selected state override residual-band stroke widths", () => {
+    expect(css).not.toMatch(/\.territory\.selected\s+circle\s*\{/);
+    expect(css).toContain('[data-residual-band="low"] > circle:not(.selection-ring)');
+    expect(css).toContain('[data-residual-band="high"] > circle:not(.selection-ring)');
+  });
 });

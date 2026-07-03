@@ -139,9 +139,6 @@ button:hover {
 [data-residual-band="high"] > circle:not(.selection-ring) { stroke-width: 3.5; stroke-dasharray: 2 2; }
 .empty-level { fill: var(--muted); text-anchor: middle; font-size: 14px; }
 #breadcrumbs button.is-path { color: var(--accent); }
-.territory.selected circle {
-  stroke-width: 3;
-}
 .territory .selection-ring { fill: none; stroke: transparent; stroke-width: 3; pointer-events: none; }
 .territory:hover .selection-ring, .territory:focus .selection-ring, .territory.selected .selection-ring { stroke: var(--accent); }
 .svg-image-skeleton, .skeleton { background: linear-gradient(110deg, var(--surface-raised) 25%, var(--line) 45%, var(--surface-raised) 65%); fill: var(--surface-raised); }
