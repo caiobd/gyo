@@ -6,7 +6,7 @@ const payload = (prefix = [], children = []) => ({
   focus: { prefix, occupancy: 10, samples: { representative: [], outliers: [] } },
   children,
   dataset_id: "dataset-a",
-  projection: { raw_stress: .125, stress: .125 },
+  projection: { raw_stress: .125, stress: .125, distances: children.map((_, i) => children.map((__, j) => Math.abs(i - j))) },
 });
 const child = { prefix: [1], occupancy: 4, position: [0, 0], has_children: true, samples: { representative: [], outliers: [] } };
 
@@ -68,10 +68,24 @@ describe("atlas orchestration", () => {
     const many = Array.from({ length: 65 }, (_, i) => ({ ...child, prefix: [i], position: [0, 0] }));
     vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true, json: async () => payload([], many) });
     vi.useFakeTimers(); const app = startAtlas(); await vi.runAllTimersAsync();
-    expect(document.getElementById("projectionStatus").textContent).toMatch(/Raw MDS stress 0.125.*layout stress unavailable while \d+ groups aggregated/);
-    expect(document.getElementById("projectionStatus").classList.contains("warning")).toBe(false);
+    expect(document.getElementById("projectionStatus").textContent).toMatch(/Raw MDS stress 0.125.*Visible layout stress \d\.\d{3}.*visible subset.*groups hidden/);
+    svg.querySelector(".territory").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(document.getElementById("inspector").textContent).toContain("Visible layout stress");
     svg.setAttribute("viewBox", "1 2 3 4"); window.dispatchEvent(new Event("resize")); await vi.runAllTimersAsync();
     expect(svg.getAttribute("viewBox")).toBe("0 0 800 600");
+    app.destroy(); vi.useRealTimers();
+  });
+
+  it("slices projection distances to original indices for aggregated visible stress", async () => {
+    shell();
+    const many = Array.from({ length: 65 }, (_, i) => ({ ...child, prefix: [i], occupancy: i === 64 ? 1000 : 1, position: [i / 64 * 2 - 1, 0] }));
+    const distances = many.map((_, i) => many.map((__, j) => Math.abs(i - j)));
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true, json: async () => ({ ...payload([], many), projection: { raw_stress: .125, distances } }) });
+    vi.useFakeTimers(); const app = startAtlas(); await vi.runAllTimersAsync();
+    expect(document.getElementById("projectionStatus").textContent).toMatch(/Visible layout stress \d\.\d{3}/);
+    expect(document.getElementById("projectionStatus").textContent).not.toContain("unavailable");
+    window.dispatchEvent(new Event("resize")); await vi.runAllTimersAsync();
+    expect(document.getElementById("projectionStatus").textContent).toMatch(/Visible layout stress \d\.\d{3}/);
     app.destroy(); vi.useRealTimers();
   });
 

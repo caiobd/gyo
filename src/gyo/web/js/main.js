@@ -55,11 +55,11 @@ export function startAtlas(doc = document, win = window) {
     const fallback = placements.some(item => item.layoutMode === "grid-fallback");
     const parts = [];
     if (Number.isFinite(projection.raw_stress ?? projection.stress)) parts.push(`Raw MDS stress ${(projection.raw_stress ?? projection.stress).toFixed(3)}`);
-    if (aggregated) parts.push(`layout stress unavailable while ${hiddenCount} groups aggregated`);
-    else if (Number.isFinite(layoutStress)) parts.push(`Layout stress ${layoutStress.toFixed(3)}`);
+    if (Number.isFinite(layoutStress)) parts.push(`Visible layout stress ${layoutStress.toFixed(3)}${hiddenCount ? ` (visible subset; ${hiddenCount} groups aggregated; groups hidden from stress)` : ""}`);
+    if (Number.isFinite(layoutStress)) parts.push("warning >0.10 (visible layout only)");
     parts.push("approximate Euclidean distance among sibling reconstructions; containment and paths exact; raw is projection, layout includes display fitting");
     if (fallback) parts.push("grid fallback: semantic distances distorted");
-    status.textContent = parts.join(" · "); status.classList.toggle("warning", Boolean(!aggregated && (layoutStress > .10 || fallback)));
+    status.textContent = parts.join(" · "); status.classList.toggle("warning", Boolean(layoutStress > .10 || fallback));
   }
   function renderBreadcrumbs() {
     crumbs.replaceChildren();
@@ -69,6 +69,7 @@ export function startAtlas(doc = document, win = window) {
       button.dataset.depth = String(i);
       if (i === state.focus.length) button.setAttribute("aria-current", "page");
       else button.addEventListener("click", () => load(prefixKey(prefix)));
+      if (state.selected) button.classList.add("is-path");
       crumbs.appendChild(button); if (i < state.focus.length) crumbs.append("›");
     }
     back.disabled = state.focus.length === 0;
@@ -96,9 +97,13 @@ export function startAtlas(doc = document, win = window) {
       if (aggregate) aggregate.revealable = visibleLimit < Math.min(state.payload.children.length, MAX_RENDERED_TERRITORIES);
       aggregated = children.some(item => item.aggregate); hiddenCount = children.find(item => item.aggregate)?.count || 0; placements = fitTerritories(children, size.width, size.height);
       const matrix = state.payload.projection?.distances;
-      layoutStress = aggregated ? null : Array.isArray(matrix) && matrix.length === placements.length
-        ? displayStress(matrix, placements)
-        : (state.payload.projection?.raw_stress ?? state.payload.projection?.stress ?? 0);
+      const visible = placements.filter(item => !item.aggregate);
+      if (Array.isArray(matrix) && visible.length >= 2) {
+        const indices = visible.map(item => state.payload.children.findIndex(child => prefixKey(child.prefix) === prefixKey(item.prefix)));
+        const sliced = indices.map(row => indices.map(column => matrix[row]?.[column]));
+        layoutStress = displayStress(sliced, visible);
+      } else if (visible.length <= 1) layoutStress = null;
+      else layoutStress = state.payload.projection?.raw_stress ?? state.payload.projection?.stress ?? null;
       if (!preserveView) resetView();
     }
     const size = bounds();
@@ -112,6 +117,7 @@ export function startAtlas(doc = document, win = window) {
     if (preserveView) applyView();
     renderInspector(inspector, selectedNode(), state.sampleMode, {
       focus: state.payload.focus,
+      projection: { displayStress: layoutStress, rawStress: state.payload.projection?.raw_stress ?? state.payload.projection?.stress, hiddenCount },
       mode(mode) { state = setSampleMode(state, mode); renderAll(false); },
       enter(node) { if (node.has_children) load(prefixKey(node.prefix)); },
     });

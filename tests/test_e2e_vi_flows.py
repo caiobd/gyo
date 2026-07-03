@@ -147,9 +147,20 @@ async def flow_boot(page: Page, base: str) -> None:
     await target.hover()
     assert await target.evaluate("node => node.classList.contains('is-path')")
     assert await page.locator("#atlas .focus-anchor").evaluate("node => node.classList.contains('is-path')")
+    prefix = await target.get_attribute("data-prefix")
+    await target.click()
+    await page.wait_for_function("prefix => document.querySelector(`[data-prefix=\"${prefix}\"]`)?.getAttribute('aria-selected') === 'true'", arg=prefix)
+    await page.mouse.move(1, 1)
+    selected = page.locator(f'#atlas .territory[data-prefix="{prefix}"]')
+    assert await selected.evaluate("node => node.classList.contains('is-path')"), "selected territory path cleared after pointer left"
+    assert await page.locator("#atlas .hierarchy-link.is-path").count() == 1, "selected hierarchy link not persistent"
+    assert await page.locator("#atlas .focus-anchor.is-path").count() == 1, "selected focus anchor not persistent"
+    assert await page.locator("#breadcrumbs button.is-path").count() >= 1, "selected breadcrumb path not persistent"
+    inspector = await page.locator("#inspector").inner_text()
+    assert "Visible layout stress" in inspector and "Raw MDS stress" in inspector, inspector
     assert "gyo" in (await page.locator(".brand").inner_text()).lower()
     projection = await page.locator("#projectionStatus").inner_text()
-    assert "Layout stress" in projection and "sibling reconstructions" in projection
+    assert "Visible layout stress" in projection and "sibling reconstructions" in projection
     assert "containment and paths exact" in projection and "raw is projection" in projection
     legend = await page.locator(".residual-legend").inner_text()
     assert "Residual low (solid/thin)" in legend and "high (short dash/thick)" in legend
@@ -373,8 +384,8 @@ async def flow_accessibility_audit(page: Page, base: str) -> None:
     await boot(page, base)
     try:
         warning = page.locator("#projectionStatus")
-        assert "Layout stress" in await warning.inner_text()
-        assert await warning.evaluate("element => element.classList.contains('warning')")
+        assert "Visible layout stress" in await warning.inner_text(), await warning.inner_text()
+        assert await warning.evaluate("element => element.classList.contains('warning')"), await warning.inner_text()
         assert await warning.evaluate("element => { const r = element.getBoundingClientRect(); return r.width > 0 && r.bottom > 0 && r.top < innerHeight; }")
 
         motion = await page.evaluate("""() => ['.territory', '.loading span', 'button'].map(selector => {

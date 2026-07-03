@@ -1,6 +1,7 @@
 import json
 from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -174,6 +175,28 @@ def test_corrupt_geometry_cache_is_rebuilt(tmp_path):
     assert json.loads(cache.read_text())["dataset_id"] == response.json()["dataset_id"]
 
 
+@pytest.mark.parametrize("saved", [
+    {"positions": [[2.0, 0.0], [0.0, 0.0]], "raw_stress": 0.1, "child_prefixes": [[0], [1]]},
+    {"positions": [[0.0, 0.0], [0.0, 0.0]], "raw_stress": -0.1, "child_prefixes": [[0], [1]]},
+    {"positions": [[0.0, 0.0], [0.0, 0.0]], "raw_stress": 0.1, "child_prefixes": [[1], [0]]},
+])
+def test_invalid_persisted_geometry_is_rebuilt(tmp_path, monkeypatch, saved):
+    _seed_run(tmp_path)
+    import gyo.api.server as server
+    client = TestClient(server.create_app(str(tmp_path)))
+    dataset_id = client.get("/api/dataset").json()["dataset_id"]
+    cache = tmp_path / "atlas/v1/geometry.json"; cache.parent.mkdir(parents=True, exist_ok=True)
+    cache.write_text(json.dumps({"dataset_id": dataset_id, "version": 1, "geometries": {"root": saved}}))
+    calls = 0; original = server.metric_mds
+    def counted(distances):
+        nonlocal calls; calls += 1; return original(distances)
+    monkeypatch.setattr(server, "metric_mds", counted)
+    response = TestClient(server.create_app(str(tmp_path))).get("/api/atlas/root")
+    assert response.status_code == 200 and calls == 1
+    rebuilt = json.loads(cache.read_text())["geometries"]["root"]
+    assert rebuilt["child_prefixes"] == [[0], [1]]
+
+
 def test_unwritable_geometry_cache_falls_back_to_memory(tmp_path, monkeypatch):
     _seed_run(tmp_path)
     import gyo.api.server as server
@@ -256,7 +279,25 @@ def test_atlas_rejects_focus_above_sibling_safety_limit(tmp_path):
     (codebooks / "config.json").write_text(json.dumps({"num_levels": 1, "codebook_size": count, "dim": 2}))
     response = TestClient(create_app(str(tmp_path))).get("/api/atlas/root")
     assert response.status_code == 409
-    assert "Drill down or filter" in response.json()["detail"]
+    assert "supported per-focus maximum" in response.json()["detail"]
+    assert "smaller codebook" in response.json()["detail"]
+    assert TestClient(create_app(str(tmp_path))).get("/api/tree").status_code == 200
+
+
+def test_atlas_accepts_exact_sibling_product_limit(tmp_path, monkeypatch):
+    _seed_run(tmp_path)
+    import gyo.api.server as server
+    count = server.MAX_ATLAS_SIBLINGS
+    pd.DataFrame({"idx": range(count), "c_0": range(count), "final_residual": np.zeros(count)}).to_parquet(tmp_path / "codes.parquet", index=False)
+    pd.DataFrame({"idx": range(count), "path": ["000000.png"] * count, "label": ["A"] * count}).to_parquet(tmp_path / "meta.parquet", index=False)
+    np.save(tmp_path / "embeddings.npy", np.zeros((count, 2)))
+    codebooks = tmp_path / "codebooks/v1"
+    np.save(codebooks / "level_0.npy", np.column_stack((np.arange(count), np.zeros(count))))
+    (codebooks / "level_1.npy").unlink()
+    (codebooks / "config.json").write_text(json.dumps({"num_levels": 1, "codebook_size": count, "dim": 2}))
+    monkeypatch.setattr(server, "metric_mds", lambda distances: SimpleNamespace(positions=np.zeros((count, 2)), stress=0.0))
+    response = TestClient(server.create_app(str(tmp_path))).get("/api/atlas/root")
+    assert response.status_code == 200 and len(response.json()["children"]) == count
 
 
 def test_atlas_internal_prefix_and_leaf(tmp_path):

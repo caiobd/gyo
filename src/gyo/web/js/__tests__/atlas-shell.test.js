@@ -20,6 +20,12 @@ describe("semantic atlas shell", () => {
     expect(html).toContain("line-pattern scale");
   });
 
+  it("contains long projection status text without intercepting breadcrumbs", () => {
+    expect(css).toContain("#projectionStatus");
+    expect(css).toMatch(/#projectionStatus\s*\{[^}]*max-width:\s*52%/s);
+    expect(css).toMatch(/#projectionStatus\s*\{[^}]*pointer-events:\s*none/s);
+  });
+
   it("does not let selected state override residual-band stroke widths", () => {
     expect(css).not.toMatch(/\.territory\.selected\s+circle\s*\{/);
     expect(css).toContain('[data-residual-band="low"] > circle:not(.selection-ring)');

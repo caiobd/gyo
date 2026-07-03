@@ -102,6 +102,29 @@ describe("semantic atlas renderer", () => {
     expect(svg.querySelector(".focus-anchor")).not.toBeNull();
   });
 
+  it("restores the selected path after hover and focus overlays clear", () => {
+    const svg = document.createElementNS(SVG, "svg"); const path = vi.fn();
+    const other = { ...node, prefix: [3], cx: 160, cy: 90, r: 20 };
+    renderMap(svg, [{ ...node, cx: 80, cy: 90, r: 20 }, other], { selected: [2], focus: [4] }, { width: 240, height: 180, path });
+    const [selected, overlay] = svg.querySelectorAll(".territory");
+    expect(selected.classList.contains("is-path")).toBe(true);
+    expect(svg.querySelector(".focus-boundary").classList.contains("is-path")).toBe(true);
+    overlay.dispatchEvent(new Event("pointerenter"));
+    expect(overlay.classList.contains("is-path")).toBe(true); expect(selected.classList.contains("is-path")).toBe(false);
+    overlay.dispatchEvent(new Event("pointerleave"));
+    expect(selected.classList.contains("is-path")).toBe(true); expect(path).toHaveBeenLastCalledWith([2]);
+    overlay.dispatchEvent(new FocusEvent("focus")); overlay.dispatchEvent(new FocusEvent("blur"));
+    expect(selected.classList.contains("is-path")).toBe(true); expect(svg.querySelectorAll(".hierarchy-link.is-path")).toHaveLength(1);
+  });
+
+  it("shows visible and raw stress with visible-subset quality scope", () => {
+    const container = document.createElement("aside");
+    renderInspector(container, node, "representative", { projection: { displayStress: .234, rawStress: .125, hiddenCount: 7 } });
+    expect(container.textContent).toContain("Visible layout stress"); expect(container.textContent).toContain("0.234");
+    expect(container.textContent).toContain("Raw MDS stress"); expect(container.textContent).toContain("0.125");
+    expect(container.textContent).toContain("visible subset"); expect(container.textContent).toContain("warning threshold");
+  });
+
   it("expands aggregate buttons without selecting or entering", () => {
     const svg = document.createElementNS(SVG, "svg"); const handlers = { expand: vi.fn(), select: vi.fn(), enter: vi.fn() };
     renderMap(svg, [{ aggregate: true, label: "+2 groups", count: 2, occupancy: 3, position: [0, 0], cx: 100, cy: 90, r: 20 }], { selected: null, focus: [], aggregateExpanded: true }, handlers);

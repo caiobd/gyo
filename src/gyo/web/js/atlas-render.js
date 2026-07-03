@@ -70,6 +70,16 @@ export function renderMap(svg, placements, state, handlers = {}) {
   if (!placements.length) { const empty = svgEl("text"); empty.classList.add("empty-level"); empty.setAttribute("x", width / 2); empty.setAttribute("y", height / 2); empty.textContent = "No child groups at this level"; svg.appendChild(empty); }
   const childrenGroup = svgEl("g"); childrenGroup.classList.add("children-group"); childrenGroup.setAttribute("role", "group"); childrenGroup.setAttribute("aria-label", `Children of ${prefixName(state.focus || [])}`); svg.appendChild(childrenGroup);
   const selectedIndex = placements.findIndex(node => samePrefix(state.selected, node.prefix));
+  const applyPath = () => {
+    const transient = [...session.activities].filter(([, value]) => value.hover || value.focus).map(([key]) => key);
+    const activeIndices = transient.length ? [transient.at(-1)] : (selectedIndex >= 0 ? [selectedIndex] : []);
+    const anyActive = activeIndices.length > 0, primary = activeIndices.at(-1);
+    childrenGroup.querySelectorAll(".territory").forEach((item, itemIndex) => item.classList.toggle("is-path", activeIndices.includes(itemIndex)));
+    childrenGroup.querySelectorAll(".territory:not(.aggregate)").forEach((item, itemIndex) => item.classList.toggle("is-sibling", anyActive && !activeIndices.includes(itemIndex)));
+    [...links.children].forEach((link, linkIndex) => link.classList.toggle("is-path", activeIndices.includes(linkIndex)));
+    anchor.classList.toggle("is-path", anyActive); boundary.classList.toggle("is-path", anyActive); svg.classList.toggle("has-active-path", anyActive);
+    handlers.path?.(anyActive ? placements[primary].prefix : null);
+  };
   placements.forEach((node, index) => {
     const group = svgEl("g");
     group.classList.add("territory");
@@ -136,13 +146,7 @@ export function renderMap(svg, placements, state, handlers = {}) {
     const activity = { hover: false, focus: false };
     const setPath = (kind, active) => {
       activity[kind] = active; session.activities.set(index, activity);
-      const activeIndices = [...session.activities].filter(([, value]) => value.hover || value.focus).map(([key]) => key);
-      const anyActive = activeIndices.length > 0, primary = activeIndices.at(-1);
-      childrenGroup.querySelectorAll(".territory").forEach((item, itemIndex) => item.classList.toggle("is-path", activeIndices.includes(itemIndex)));
-      childrenGroup.querySelectorAll(".territory:not(.aggregate)").forEach((item, itemIndex) => item.classList.toggle("is-sibling", anyActive && !activeIndices.includes(itemIndex)));
-      [...links.children].forEach((link, linkIndex) => link.classList.toggle("is-path", activeIndices.includes(linkIndex)));
-      anchor.classList.toggle("is-path", anyActive); svg.classList.toggle("has-active-path", anyActive);
-      handlers.path?.(anyActive ? placements[primary].prefix : null);
+      applyPath();
     };
     group.addEventListener("pointerenter", () => setPath("hover", true)); group.addEventListener("pointerleave", () => setPath("hover", false));
     group.addEventListener("focus", () => setPath("focus", true)); group.addEventListener("blur", () => setPath("focus", false));
@@ -164,6 +168,7 @@ export function renderMap(svg, placements, state, handlers = {}) {
     });
     childrenGroup.appendChild(group);
   });
+  applyPath();
 }
 
 function metric(grid, label, value, format = String) {
@@ -205,6 +210,15 @@ export function renderInspector(container, node, mode, handlers = {}) {
   metric(metrics, "Normalized residual", node.residual_norm, value => value.toFixed(3));
   metric(metrics, "Parent distance / displacement", node.parent_distance, value => value.toFixed(3));
   metric(metrics, "Token norm", node.token_norm, value => value.toFixed(3));
+  const projection = handlers.projection || {};
+  metric(metrics, "Visible layout stress", projection.displayStress, value => value.toFixed(3));
+  metric(metrics, "Raw MDS stress", projection.rawStress, value => value.toFixed(3));
+  if (Number.isFinite(projection.displayStress) || Number.isFinite(projection.rawStress)) {
+    const quality = document.createElement("p"); quality.className = "projection-quality";
+    const scope = projection.hiddenCount > 0 ? `This visible subset excludes ${projection.hiddenCount} hidden groups. ` : "";
+    quality.textContent = `${scope}The 0.10 warning threshold applies only to Visible layout stress; Raw MDS stress describes the unconstrained sibling projection.`;
+    container.appendChild(quality);
+  }
   if (token && Number.isFinite(node.parent_distance)) {
     const explanation = document.createElement("p"); explanation.className = "parent-explanation";
     explanation.textContent = `Token ${token} moves the reconstruction by ${node.parent_distance.toFixed(3)} in original Euclidean space. Token norm measures the codebook vector; displacement compares parent and child reconstructions${Number.isFinite(node.token_norm) && Math.abs(node.token_norm - node.parent_distance) < 1e-9 ? ", so they are equal for this residual-quantization step" : ""}.`;

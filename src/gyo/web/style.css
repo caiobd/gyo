@@ -86,6 +86,11 @@ button:hover {
 #projectionStatus {
   font-size: 0.82rem;
   color: var(--muted);
+  max-width: 52%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
 }
 #projectionStatus.warning {
   color: var(--warning);
@@ -131,6 +136,7 @@ button:hover {
 .focus-anchor circle { fill: var(--accent); stroke: var(--canvas); stroke-width: 2; }
 .focus-anchor text { fill: var(--muted); font-size: 11px; }
 .hierarchy-link.is-path { stroke: var(--accent); stroke-width: 2; }
+.focus-boundary.is-path { stroke: var(--accent); }
 .focus-anchor.is-path text { fill: var(--text); }
 #atlas.has-active-path .territory:not(.is-path):not(.is-sibling) { opacity: .42; }
 .territory.aggregate > circle:not(.selection-ring) { fill: var(--surface-raised); }

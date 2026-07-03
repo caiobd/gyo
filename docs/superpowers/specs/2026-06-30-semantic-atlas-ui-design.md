@@ -29,6 +29,10 @@ Each territory contains a small, legible sample of representative images. Territ
 
 ## 4. Geometry
 
+### Scope and scale
+
+This bounded first version supports at most 256 real siblings per focus (`MAX_ATLAS_SIBLINGS`). This is an explicit analytical product constraint: larger per-focus codebooks require retraining with lower cardinality, while `/api/tree` remains available. The browser displays at most 96 real territories at once and uses a synthetic aggregate for hidden groups. Projection quality for a capped or aggregated view is computed from the visible real-child subset only; the aggregate is excluded.
+
 ### 4.1 Semantic vectors
 
 For a prefix `(c0, ..., cn)`, the backend computes:

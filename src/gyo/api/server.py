@@ -565,7 +565,8 @@ def create_app(data_dir: str) -> FastAPI:
             raise HTTPException(
                 409,
                 f"Atlas focus has {len(child_nodes)} siblings; limit is "
-                f"{MAX_ATLAS_SIBLINGS}. Drill down or filter the dataset.",
+                f"{MAX_ATLAS_SIBLINGS}; this dataset exceeds the supported per-focus maximum. "
+                "Train with a smaller codebook (or retrain with lower per-level cardinality).",
             )
         child_prefixes = [child.prefix for child in child_nodes]
         distances = sibling_distance_matrix(child_prefixes, codebooks)
@@ -579,12 +580,16 @@ def create_app(data_dir: str) -> FastAPI:
                 positions.shape != (len(child_nodes), 2)
                 or not np.isfinite(positions).all()
                 or not np.isfinite(raw_stress)
+                or raw_stress < 0
+                or np.any(positions < -1.000000001)
+                or np.any(positions > 1.000000001)
+                or saved.get("child_prefixes") != [list(prefix) for prefix in child_prefixes]
             ):
                 raise ValueError
         except (TypeError, KeyError, ValueError, OverflowError):
             projection = metric_mds(distances)
             positions, raw_stress = projection.positions, projection.stress
-            geometries[geometry_key] = {"positions": positions.tolist(), "raw_stress": raw_stress}
+            geometries[geometry_key] = {"positions": positions.tolist(), "raw_stress": raw_stress, "child_prefixes": [list(prefix) for prefix in child_prefixes]}
             _persist_geometry()
         parent_vector = prefix_vector(pfx, codebooks)
         children = []
