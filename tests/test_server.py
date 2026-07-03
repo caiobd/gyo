@@ -177,6 +177,7 @@ def test_corrupt_geometry_cache_is_rebuilt(tmp_path):
 
 @pytest.mark.parametrize("saved", [
     {"positions": [[2.0, 0.0], [0.0, 0.0]], "raw_stress": 0.1, "child_prefixes": [[0], [1]]},
+    {"positions": [[1.0 + np.finfo(float).eps, 0.0], [0.0, 0.0]], "raw_stress": 0.1, "child_prefixes": [[0], [1]]},
     {"positions": [[0.0, 0.0], [0.0, 0.0]], "raw_stress": -0.1, "child_prefixes": [[0], [1]]},
     {"positions": [[0.0, 0.0], [0.0, 0.0]], "raw_stress": 0.1, "child_prefixes": [[1], [0]]},
 ])
@@ -193,6 +194,7 @@ def test_invalid_persisted_geometry_is_rebuilt(tmp_path, monkeypatch, saved):
     monkeypatch.setattr(server, "metric_mds", counted)
     response = TestClient(server.create_app(str(tmp_path))).get("/api/atlas/root")
     assert response.status_code == 200 and calls == 1
+    assert all(abs(coordinate) <= 1.0 for child in response.json()["children"] for coordinate in child["position"])
     rebuilt = json.loads(cache.read_text())["geometries"]["root"]
     assert rebuilt["child_prefixes"] == [[0], [1]]
 

@@ -5,13 +5,19 @@ export function viewportCapacity(width, height, minReadableDiameter = 72) {
   return Math.max(1, Math.min(63, Math.floor(Math.max(0, width) / minReadableDiameter) * Math.floor(Math.max(0, height) / minReadableDiameter)));
 }
 
-export function aggregateDenseChildren(children, maxVisible = 63, expanded = false) {
+export function aggregateDenseChildren(children, maxVisible = 63, expanded = false, pinnedPrefix = null) {
   if (!Array.isArray(children)) throw new TypeError("children must be an array");
   if (expanded || children.length <= maxVisible) return children;
+  const limit = Math.max(0, Math.floor(maxVisible));
   const ranked = children.map((node, index) => ({ node, index })).sort((a, b) =>
     b.node.occupancy - a.node.occupancy || a.index - b.index);
-  const kept = ranked.slice(0, maxVisible).sort((a, b) => a.index - b.index).map(item => item.node);
-  const hidden = ranked.slice(maxVisible).sort((a, b) => a.index - b.index).map(item => item.node);
+  const samePrefix = node => Array.isArray(pinnedPrefix) && node.prefix?.length === pinnedPrefix.length && node.prefix.every((value, i) => value === pinnedPrefix[i]);
+  const pinned = limit > 0 ? ranked.find(item => samePrefix(item.node)) : null;
+  let keptItems = ranked.slice(0, limit);
+  if (pinned && !keptItems.includes(pinned)) keptItems = [...keptItems.slice(0, -1), pinned];
+  const keptSet = new Set(keptItems);
+  const kept = keptItems.sort((a, b) => a.index - b.index).map(item => item.node);
+  const hidden = ranked.filter(item => !keptSet.has(item)).sort((a, b) => a.index - b.index).map(item => item.node);
   const occupancy = hidden.reduce((sum, node) => sum + node.occupancy, 0);
   const denominator = occupancy || hidden.length || 1;
   const position = [0, 1].map(axis => hidden.reduce((sum, node) =>

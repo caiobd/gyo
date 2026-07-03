@@ -581,8 +581,8 @@ def create_app(data_dir: str) -> FastAPI:
                 or not np.isfinite(positions).all()
                 or not np.isfinite(raw_stress)
                 or raw_stress < 0
-                or np.any(positions < -1.000000001)
-                or np.any(positions > 1.000000001)
+                or np.any(positions < -1.0)
+                or np.any(positions > 1.0)
                 or saved.get("child_prefixes") != [list(prefix) for prefix in child_prefixes]
             ):
                 raise ValueError

@@ -39,7 +39,7 @@ export function startAtlas(doc = document, win = window) {
   const brand = doc.querySelector(".brand");
   const cache = new Map(), guard = createRequestGuard(), removers = [];
   let state, placements = [], successful = false, currentPrefix = "root";
-  let datasetId = null, layoutStress = 0, requestedRevealScale = 1, aggregated = false, hiddenCount = 0, pageCapacity = 63;
+  let datasetId = null, layoutStress = 0, projectionInvalid = false, requestedRevealScale = 1, aggregated = false, hiddenCount = 0, pageCapacity = 63;
   let view, baseView, drag = null, suppressClick = false, resizeTimer, destroyed = false;
 
   const on = (target, type, listener, options) => {
@@ -57,6 +57,7 @@ export function startAtlas(doc = document, win = window) {
     if (Number.isFinite(projection.raw_stress ?? projection.stress)) parts.push(`Raw MDS stress ${(projection.raw_stress ?? projection.stress).toFixed(3)}`);
     if (Number.isFinite(layoutStress)) parts.push(`Visible layout stress ${layoutStress.toFixed(3)}${hiddenCount ? ` (visible subset; ${hiddenCount} groups aggregated; groups hidden from stress)` : ""}`);
     if (Number.isFinite(layoutStress)) parts.push("warning >0.10 (visible layout only)");
+    if (projectionInvalid) parts.push("invalid projection matrix; visible layout unavailable (raw stress only)");
     parts.push("approximate Euclidean distance among sibling reconstructions; containment and paths exact; raw is projection, layout includes display fitting");
     if (fallback) parts.push("grid fallback: semantic distances distorted");
     status.textContent = parts.join(" · "); status.classList.toggle("warning", Boolean(layoutStress > .10 || fallback));
@@ -92,16 +93,23 @@ export function startAtlas(doc = document, win = window) {
       const zoomScale = baseView && view ? baseView.width / view.width : 1;
       const revealScale = Math.max(requestedRevealScale, clamp(zoomScale, 1, 2));
       const visibleLimit = Math.min(state.payload.children.length, Math.floor(pageCapacity * revealScale), MAX_RENDERED_TERRITORIES);
-      const children = aggregateDenseChildren(state.payload.children, visibleLimit, false);
+      const children = aggregateDenseChildren(state.payload.children, visibleLimit, false, state.selected);
+      if (state.selected && !children.some(item => !item.aggregate && prefixKey(item.prefix) === prefixKey(state.selected))) state = { ...state, selected: null };
       const aggregate = children.find(item => item.aggregate);
       if (aggregate) aggregate.revealable = visibleLimit < Math.min(state.payload.children.length, MAX_RENDERED_TERRITORIES);
       aggregated = children.some(item => item.aggregate); hiddenCount = children.find(item => item.aggregate)?.count || 0; placements = fitTerritories(children, size.width, size.height);
       const matrix = state.payload.projection?.distances;
       const visible = placements.filter(item => !item.aggregate);
+      projectionInvalid = false;
       if (Array.isArray(matrix) && visible.length >= 2) {
-        const indices = visible.map(item => state.payload.children.findIndex(child => prefixKey(child.prefix) === prefixKey(item.prefix)));
-        const sliced = indices.map(row => indices.map(column => matrix[row]?.[column]));
-        layoutStress = displayStress(sliced, visible);
+        try {
+          const indices = visible.map(item => state.payload.children.findIndex(child => prefixKey(child.prefix) === prefixKey(item.prefix)));
+          if (indices.some(index => index < 0)) throw new RangeError("visible child is missing from projection matrix");
+          const sliced = indices.map(row => indices.map(column => matrix[row]?.[column]));
+          layoutStress = displayStress(sliced, visible);
+        } catch (error) {
+          layoutStress = null; projectionInvalid = true;
+        }
       } else if (visible.length <= 1) layoutStress = null;
       else layoutStress = state.payload.projection?.raw_stress ?? state.payload.projection?.stress ?? null;
       if (!preserveView) resetView();

@@ -101,6 +101,30 @@ describe("atlas orchestration", () => {
     app.destroy(); vi.useRealTimers();
   });
 
+  it("keeps a selected low-occupancy territory visible through collapse and resize", async () => {
+    const svg = shell(); const many = Array.from({ length: 65 }, (_, i) => ({ ...child, prefix: [i], occupancy: i + 1, position: [0, 0] }));
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true, json: async () => payload([], many) });
+    vi.useFakeTimers(); const app = startAtlas(); await vi.runAllTimersAsync();
+    svg.querySelector(".territory.aggregate").dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    svg.querySelector('[data-prefix="0"]').dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    document.getElementById("collapseDenseBtn").click();
+    expect(svg.querySelector('[data-prefix="0"].selected.is-path')).not.toBeNull();
+    expect(document.getElementById("inspector").textContent).toContain("token c0");
+    window.dispatchEvent(new Event("resize")); await vi.runAllTimersAsync();
+    expect(svg.querySelector('[data-prefix="0"].selected.is-path')).not.toBeNull();
+    expect(svg.querySelectorAll(".hierarchy-link.is-path")).toHaveLength(1);
+    app.destroy(); vi.useRealTimers();
+  });
+
+  it("renders raw-only projection status when the distance matrix is malformed", async () => {
+    const svg = shell(); const children = [{ ...child, prefix: [0] }, { ...child, prefix: [1] }];
+    vi.spyOn(globalThis, "fetch").mockResolvedValue({ ok: true, json: async () => ({ ...payload([], children), projection: { raw_stress: .25, distances: [[0], [1, 0]] } }) });
+    const app = startAtlas(); await flush();
+    expect(svg.querySelectorAll(".territory")).toHaveLength(2);
+    expect(document.getElementById("projectionStatus").textContent).toMatch(/Raw MDS stress 0.250.*invalid projection matrix.*visible layout unavailable/);
+    app.destroy();
+  });
+
   it("uses viewport capacity and progressively reveals another page on zoom", async () => {
     const svg = shell(); svg.getBoundingClientRect = () => ({ width: 360, height: 240, left: 0, top: 0 });
     const many = Array.from({ length: 40 }, (_, i) => ({ ...child, prefix: [i], occupancy: i + 1, position: [0, 0] }));

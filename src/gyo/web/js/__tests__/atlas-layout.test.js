@@ -22,6 +22,19 @@ describe("fitTerritories", () => {
     expect(visible.at(-1).count).toBe(193);
   });
 
+  it("pins a selected low-occupancy child and recomputes the aggregate", () => {
+    const children = Array.from({ length: 6 }, (_, i) => ({ prefix: [i], occupancy: i + 1, position: [i / 5, 0] }));
+    const visible = aggregateDenseChildren(children, 3, false, [0]);
+    expect(visible.filter(item => !item.aggregate).map(item => item.prefix[0])).toEqual([0, 4, 5]);
+    expect(visible.at(-1)).toMatchObject({ aggregate: true, count: 3, occupancy: 9 });
+    expect(visible.reduce((sum, item) => sum + item.occupancy, 0)).toBe(21);
+  });
+
+  it("cannot pin a selection when no real slot is available", () => {
+    const children = [{ prefix: [0], occupancy: 1, position: [0, 0] }];
+    expect(aggregateDenseChildren(children, 0, false, [0])).toEqual([expect.objectContaining({ aggregate: true, count: 1 })]);
+  });
+
   it("derives a pure readable capacity capped at 63", () => {
     expect(viewportCapacity(320, 240, 80)).toBe(12);
     expect(viewportCapacity(4000, 3000, 40)).toBe(63);
